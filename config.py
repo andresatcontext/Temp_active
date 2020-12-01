@@ -1,5 +1,5 @@
 
-def Load_config(NUM_TRAIN,input_shape,num_class,active_learning = False):
+def Load_config(NUM_TRAIN,input_shape,num_class,initial_weight=False, base_weight_path=False,active_learning = False):
     # just to select faster if run active learning or train the whole network
     active_learning = False
 
@@ -26,14 +26,33 @@ def Load_config(NUM_TRAIN,input_shape,num_class,active_learning = False):
     # common config
     # length embedding for z
     config["embedding_size"] = 128
-    config["batch_size"] = 64
+    config["batch_size"] = 128
     
     
     # Training parameters:
+    config["initial_weight"] = initial_weight
+    config["base_weight_path"] = base_weight_path
+    
+    
+    # To delete
     config["start_epoch"] = 0
     
+    # Parameters losses
+    # "learning loss" loss
+    config["MARGIN"] = 1.0
+    config["reduction"] ='mean' # 'none'
 
+    # Parametes optimizer
+    # learning rate
+    config["lr"] = 0.001
+    # Gamma for MultiStepLR
+    config["gamma"] = 1e-1
     # 
+    config["momentum"] = 0.9
+    config["wdecay"] = 0.9995
+    
+    
+
 
     if active_learning:
 
@@ -62,19 +81,6 @@ def Load_config(NUM_TRAIN,input_shape,num_class,active_learning = False):
         # After 120 epochs, stop the gradient from the loss prediction module propagated to the target model
 
         # Parameters losses
-        # "learning loss" loss
-        config["MARGIN"] = 1.0
-        config["reduction"] ='mean' # 'none'
-        
-        # Parametes optimizer
-        # learning rate
-        config["lr"] = 1e-1
-        # Gamma for MultiStepLR
-        config["gamma"] = 1e-1
-        # 
-        config["momentum"] = 0.9
-        config["wdecay"] = 5e-4
-
         # weights when adding the losses
         config["w_c_loss"] = 1.0
         config["w_l_loss"] = 1.0
@@ -105,19 +111,6 @@ def Load_config(NUM_TRAIN,input_shape,num_class,active_learning = False):
         config["EPOCHL"] = 40 
 
 
-        # Parameters losses
-        # "learning loss" loss
-        config["MARGIN"] = 1.0
-        config["reduction"] ='mean' # 'none'
-        
-        # Parametes optimizer
-        # learning rate
-        config["lr"] = 1e-5
-        # Gamma for MultiStepLR
-        config["gamma"] = 1e-1
-        # 
-        config["momentum"] = 0.9
-        config["wdecay"] = 5e-4
 
         # weights when adding the losses
         config["w_c_loss"] = 1.0

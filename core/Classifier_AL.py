@@ -16,8 +16,9 @@ class Lossnet(object):
         
         def get_embedding_nets(embedding_size):
             return Sequential([layers.GlobalAveragePooling2D(),layers.Dense(embedding_size),layers.Activation("relu")])
- 
+        
         embeddings_fn_list=[]
+    
         # generate the embeddings layers
         for feature in features:
             embeddings_fn_list.append(get_embedding_nets(self.embedding_size)(feature))
@@ -62,10 +63,9 @@ class Loss_Lossnet(object):
 
 class Classifier_AL(object):
     """Implement tensoflow yolov3 here"""
-    def __init__(self, backbone, config, stop_gradient = False, dataset_header=None):
+    def __init__(self, backbone, config, dataset_header=None):
         
 
-        
         self.backbone = backbone
         
         # parameters model
@@ -76,16 +76,6 @@ class Classifier_AL(object):
         # learning loss parameters
         self.margin       = config.MARGIN
         self.reduction    = config.reduction
-
-        self.stop_gradient = stop_gradient
-        
-        #
-        #self.class_loss_fn_sum = losses.CategoricalCrossentropy()
-        #self.class_loss_fn_none = losses.CategoricalCrossentropy(reduction='none')
-
-    
-        #self.c_pred, self.l_pred_w, self.l_pred_s = self.__build_nework(input_data)
-        
 
     def build_nework(self,input_data):
         def get_embedding_nets(embedding_size):
@@ -120,10 +110,13 @@ class Classifier_AL(object):
                 embeddings_list_whole.append(embeddings_fn_list[i](out))
             
             embedding_whole    =  concat_same(embeddings_list_whole)
-            embedding_split =  concat_same(embeddings_list_split)
+            embedding_split    =  concat_same(embeddings_list_split)
             
-            l_pred_w    = dense_fn(embedding_whole)
-            l_pred_s = dense_fn(embedding_split)
+            l_pred_w = tf.squeeze(dense_fn(embedding_whole))
+            l_pred_s = tf.squeeze(dense_fn(embedding_split))
+            
+        self.emb_w = embedding_whole
+        self.emb_s = embedding_split 
             
         self.c_pred = c_pred
         self.l_pred_w = l_pred_w
@@ -174,8 +167,7 @@ class Classifier_AL(object):
         self.l_loss_w = l_loss_w
         self.l_loss_s = l_loss_s
         self.l_true  = l_true
+        self.class_loss_non_reducted = class_loss_non_reducted
 
         return self.c_loss, self.l_loss_w, self.l_loss_s, self.l_true
     
-    def compute_metrics(self, c_true):
-        pass

@@ -1,8 +1,6 @@
 import tensorflow.keras as keras
 from tensorflow.keras.datasets import cifar10
-import matplotlib.pyplot as plt
 import numpy as np
-#import cv2
 
 class CIFAR10Data(object):
     def __init__(self):
