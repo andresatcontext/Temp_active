@@ -53,7 +53,7 @@ def ResidualBlock(x, filters, kernel_size, downsample=True):
 
 
 
-def ResNet18(img_input, classes):
+def resnet18(img_input, classes):
     #img_input = Input(shape=input_shape, name="img_input")
 
     init_filters =64

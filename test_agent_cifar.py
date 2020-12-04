@@ -1,21 +1,18 @@
 import ray
 
-@ray.remote(num_gpus=1)
-class AL_test_cifar:
-    def __init__(self,  project, 
-                        source, 
-                        dataset_name, 
-                        group, 
-                        run_dir, 
-                        datanet, 
-                        dataset_header, 
-                        config, 
+@ray.remote(num_gpus=1, resources={"gpu_lvl_1" : 1})
+class Active_Learning_test:
+    def __init__(self,  config, 
+                        test_set, 
+                        num_run,
+                        epoch,
                         weight_file, 
-                        step, 
-                        wandb_id=None, 
-                        agnostic_eval=False):
+                        wandb_id=None):
         
         
+        #############################################################################################
+        # LIBRARIES
+        ############################################################################################# 
         import os
         self.run_path = os.path.dirname(os.path.realpath(__file__))
         os.chdir(self.run_path)
@@ -29,34 +26,38 @@ class AL_test_cifar:
 
         from tensorflow.python import pywrap_tensorflow
         import numpy as np
-        
-        self.backbone = backbones.ResNet18
-        
+        import pandas as pd
         
         #############################################################################################
         # PARAMETERS 
         #############################################################################################
-        self.project        = project
-        self.source         = source
-        self.dataset_name   = dataset_name
-        self.group          = group
-        self.run_dir        = run_dir
-        self.datanet        = datanet
-        self.dataset_header = dataset_header
-        self.step           = step
+        self.config         = config
+        self.source         = config["PROJECT"]["source"]
+        self.run_dir        = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
+        self.num_run        = num_run
+        self.name_run       = "AL_Test_"+str(num_run)
+        
+        self.pre ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
+        
+        self.epoch          = epoch
         
         self.weight_name       = weight_file
         self.weight_file       = os.path.join(self.run_dir, 'checkpoint', weight_file)
+        
         self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
-        
-        
-        # change value from the config to not reduce the losses in order to compute the metrics for LossNet
-        config['reduction'] = 'none'
+        self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
 
         try:
             os.mkdir(self.evaluation_folder)
         except:
             pass
+        
+        if not os.path.isfile(self.evaluation_file ) or epoch==0:
+            self.df = pd.DataFrame(columns=['epoch','accuracy'])
+            self.df.to_csv(self.evaluation_file )
+        else:
+            self.df = pd.read_csv(self.evaluation_file ,index_col=0)
+        
         
         #############################################################################################
         # SETUP WANDB
@@ -65,21 +66,22 @@ class AL_test_cifar:
         self.wandb = wandb
 
         if wandb_id is None:
-            self.wandb.init(project=self.project, 
-                group=self.group, 
-                job_type="test",
-                config=config)
+            self.wandb.init(project  = config["PROJECT"]["project"], 
+                            group    = config["PROJECT"]["group"], 
+                            name     = self.name_run,
+                            job_type = "Test",
+                            config   =  config)
             self.run_id = wandb.run.id
         else:
-            self.wandb.init(project=self.project, 
-                group=self.group, 
-                job_type="test",
-                id=wandb_id, 
-                resume=True,
-                config=config)
+            self.wandb.init(project  = config["PROJECT"]["project"], 
+                            group    = config["PROJECT"]["group"], 
+                            name     = self.name_run,
+                            job_type = "Test",
+                            id=wandb_id, 
+                            resume=True,
+                            config   =  config)
             self.run_id = wandb_id
             
-        self.config = self.wandb.config
 
         
         #############################################################################################
@@ -89,10 +91,10 @@ class AL_test_cifar:
             from data_utils import CIFAR10Data
             # Load data
             cifar10_data = CIFAR10Data()
-            num_classes = len(cifar10_data.classes)
             _, _, x_test, y_test = cifar10_data.get_data(subtract_mean=False)
             
-            self.classes = cifar10_data.classes
+            #x_test = x_test[test_set]
+            #y_test = y_test[test_set]
         else:
             pass
         
@@ -104,11 +106,14 @@ class AL_test_cifar:
 
         train_gen = train_datagen.flow(x_test,
                                        y_test,
-                                       batch_size=self.config.batch_size,
+                                       batch_size= self.config["TEST"]["batch_size"],
                                        shuffle=False)
         
-        features_shape = [None, 32, 32, 3]
-        labels_shape = [None, 10]
+        wh = self.config["NETWORK"]["INPUT_SIZE"]
+        num_cls = len(self.config["NETWORK"]["CLASSES"])
+        
+        features_shape = [None, wh, wh, 3]
+        labels_shape = [None, num_cls]
         
         tf_data = tf.data.Dataset.from_generator(lambda: train_gen, 
                                                  output_types=(tf.float32, tf.float32),
@@ -121,30 +126,24 @@ class AL_test_cifar:
         #############################################################################################
         # GENERATE MODEL
         #############################################################################################
-        with tf.name_scope("define_loss"):
-            # define inputs to test 
-            #self.img_input = layers.Input(shape=self.config.input_shape, name="img_input")
-            #c_true = layers.Input(shape=(self.config.num_class), name="c_true")
-            
+        
+        # Get the selected backbone
+        self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
+        
+        with tf.name_scope("define_loss"):           
             # get the classifier
-            self.model = core.Classifier_AL(self.backbone, self.config)
+            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], reduction='mean')
+            
             self.c_pred, self.l_pred_w, self.l_pred_s = self.model.build_nework(self.img_input)
 
             self.c_loss, self.l_loss_w, self.l_loss_s, self.l_true = self.model.compute_loss(self.c_true)
         
-            
 
         #############################################################################################
         # GLOBAL PROGRESS
         #############################################################################################
-        self.evaluation_steps = int(np.ceil(len(x_test) / self.config.batch_size))
+        self.evaluation_steps = int(np.ceil(len(x_test) / self.config['TRAIN']["batch_size"]))
 
-
-        #############################################################################################
-        # DEFINE WEIGHT DEACY
-        #############################################################################################
-        with tf.name_scope("define_weight_decay"):
-            moving_ave = tf.train.ExponentialMovingAverage(self.config.wdecay)
            
         #############################################################################################
         # METRICS
@@ -175,7 +174,7 @@ class AL_test_cifar:
         #TODO this should load a checkpoint of a training based in the training epoch or
         # this could load any saved model for transfer learning
         self.saver = tf.compat.v1.train.Saver(tf.global_variables())
-        print('Restoring from '+str(self.weight_file))
+        print(self.pre, 'Restoring from '+str(self.weight_file))
         self.saver.restore(self.sess, self.weight_file)
                     
 
@@ -192,22 +191,9 @@ class AL_test_cifar:
         import time
         import plotly.graph_objects as go
         from sklearn import metrics
-        
-        
-        #############################################################################################
-        # CREATE FOLDERS TO SAVE THE DATA
-        #############################################################################################
-        self.evaluation_folder = os.path.join(self.evaluation_folder, self.weight_name)
-        if os.path.exists(self.evaluation_folder): shutil.rmtree(self.evaluation_folder)
-        os.mkdir(self.evaluation_folder)
+        import pandas as pd
 
-        predicted_dir_path = os.path.join(self.evaluation_folder, 'predicted')
-        ground_truth_dir_path = os.path.join(self.evaluation_folder, 'ground-truth')
-        if os.path.exists(predicted_dir_path): shutil.rmtree(predicted_dir_path)
-        if os.path.exists(ground_truth_dir_path): shutil.rmtree(ground_truth_dir_path)
-        os.mkdir(ground_truth_dir_path)
-        os.mkdir(predicted_dir_path)
-        
+
         #############################################################################################
         # INFER THE TEST SET
         #############################################################################################
@@ -249,43 +235,57 @@ class AL_test_cifar:
         
         # Compute the F1 score, also known as balanced F-score or F-measure
         f1 = metrics.f1_score(annot_array, pred_array, average='macro')
-        self.wandb.log({'F1 score': f1}, step=self.step)
+        self.wandb.log({'F1 score': f1}, step=self.epoch)
         
-        # Accuracy classification score.
+        # Accuracy classification score
         accuracy = metrics.accuracy_score(annot_array, pred_array)
-        self.wandb.log({'Accuracy classification score': accuracy}, step=self.step)
+        self.wandb.log({'Test: Classification Accuracy': accuracy}, step=self.epoch)
         
         # Compute Receiver operating characteristic (ROC)
         false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
         fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
-        self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=self.step)
+        self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=self.epoch)
         
         #  Area Under the Curve (AUC) 
         res_auc = metrics.auc(false_positives_axe, true_positives_axe)
-        self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=self.step)  
+        self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=self.epoch)  
         
         # Compute confusion matrix to evaluate the accuracy of a classification.
-        if self.config.num_class<200:
+        if len(self.config["NETWORK"]["CLASSES"])<200:
             cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
             fig_cm = self.Plot_confusion_matrix(cm)
-            self.wandb.log({'Confusion Matrix' : fig_cm}, step=self.step)
+            self.wandb.log({'Confusion Matrix' : fig_cm}, step=self.epoch)
                    
         ######## Regression (loss estimation)
         
         mae_v1 = metrics.mean_absolute_error(true_loss_v1, pred_loss)
-        self.wandb.log({'Mean absolute error v1': mae_v1}, step=self.step)
+        self.wandb.log({'Mean absolute error v1': mae_v1}, step=self.epoch)
         mae_v2 = metrics.mean_absolute_error(true_loss_v2, pred_loss)
-        self.wandb.log({'Mean absolute error v2': mae_v2}, step=self.step)
+        self.wandb.log({'Mean absolute error v2': mae_v2}, step=self.epoch)
         
         evs_v1 = metrics.explained_variance_score(true_loss_v1, pred_loss)
-        self.wandb.log({'Explained variance v1': evs_v1}, step=self.step)
+        self.wandb.log({'Explained variance v1': evs_v1}, step=self.epoch)
         evs_v2 = metrics.explained_variance_score(true_loss_v2, pred_loss)
-        self.wandb.log({'Explained variance v2': evs_v2}, step=self.step)
+        self.wandb.log({'Explained variance v2': evs_v2}, step=self.epoch)
                 
         mse_v1 = metrics.mean_squared_error(true_loss_v1, pred_loss)
-        self.wandb.log({'Mean squared error v1': mse_v1}, step=self.step)
+        self.wandb.log({'Mean squared error v1': mse_v1}, step=self.epoch)
         mse_v2 = metrics.mean_squared_error(true_loss_v2, pred_loss)
-        self.wandb.log({'Mean squared error v2': mse_v2}, step=self.step)          
+        self.wandb.log({'Mean squared error v2': mse_v2}, step=self.epoch)  
+        
+        #############################################################################################
+        # Save accuracy and epoch to select best model
+        #############################################################################################
+        temp_df= pd.DataFrame({'epoch':[self.epoch],'accuracy':[accuracy]})
+        
+        pd.concat([self.df,temp_df],ignore_index=True).to_csv(self.evaluation_file)
+        
+        to_print = 'Test || '
+        to_print += "Epoch: %2d || "%(self.epoch)
+        to_print += "Accuracy: %.2f || "%(100*accuracy)
+        print(self.pre, to_print)
+
+        
 
                   
     def Plot_confusion_matrix(self,cm):
@@ -303,8 +303,8 @@ class AL_test_cifar:
         # Compute and save confusion matrix
         fig = go.Figure({'data': [
                             {
-                                'x': self.classes,
-                                'y': self.classes,
+                                'x': self.config["NETWORK"]["CLASSES"],
+                                'y': self.config["NETWORK"]["CLASSES"],
                                 'z': cm.tolist(),
                                 'type': 'heatmap', 'name': 'Confusion_matrix',
                                 'colorscale': [[0, 'rgb(255, 255, 255)'],

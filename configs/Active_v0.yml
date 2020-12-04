@@ -1,0 +1,42 @@
+ACTIVE_ALGO:
+  LOSSLEARNING: 1.0
+DATASET:
+  height_shift_range: 4
+  horizontal_flip: true
+  width_shift_range: 4
+NETWORK:
+  CLASSES: null
+  INPUT_SIZE: null
+  MARGIN: 1.0
+  embedding_size: 128
+PROJECT:
+  Backbone: resnet18
+  dataset_name: CIFAR
+  group: Active_Learning_v0
+  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Active_Learning_v0
+  project: Active_Learning_CIFAR
+  project_dir: /mnt/Ressources/Andres/Temp_active/runs
+  source: CIFAR
+RUNS:
+  ADDENDUM: 1000
+  CYCLES: 10
+  SUBSET: -1
+  TRIALS: 1
+  test_each: 5
+TEST:
+  batch_size: 128
+TRAIN:
+  Data_augementation: true
+  EPOCH_SLIT: 80
+  EPOCH_WARMUP: 2
+  EPOCH_WHOLE: 120
+  MILESTONES:
+  - 160
+  batch_size: 128
+  gamma: 0.1
+  lr: 0.001
+  start_epoch: 0
+  transfer_weight_path: false
+  w_c_loss: 1.0
+  w_l_loss: 1.0
+  wdecay: 0.9995

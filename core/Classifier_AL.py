@@ -63,19 +63,17 @@ class Loss_Lossnet(object):
 
 class Classifier_AL(object):
     """Implement tensoflow yolov3 here"""
-    def __init__(self, backbone, config, dataset_header=None):
+    def __init__(self, backbone, config, reduction='mean'):
         
-
         self.backbone = backbone
         
         # parameters model
-        self.num_class    = config.num_class
-        self.wdecay    = config.wdecay
-        self.embedding_size = config.embedding_size
+        self.num_class      = len(config["CLASSES"])
+        self.embedding_size = config["embedding_size"]
         
         # learning loss parameters
-        self.margin       = config.MARGIN
-        self.reduction    = config.reduction
+        self.margin       = config["MARGIN"]
+        self.reduction    = reduction
 
     def build_nework(self,input_data):
         def get_embedding_nets(embedding_size):
