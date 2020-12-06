@@ -19,7 +19,7 @@ def conv2d_bn(x, filters, kernel_size, strides=(1, 1)):
                    padding='same',
                    use_bias=False,
                    )(x)
-    layer = BatchNormalization()(layer)
+    layer = BatchNormalization()(layer, )
     return layer
 
 
@@ -53,13 +53,13 @@ def ResidualBlock(x, filters, kernel_size, downsample=True):
 
 
 
-def resnet18(img_input, classes):
+def resnet18(img_input, classes, training):
     #img_input = Input(shape=input_shape, name="img_input")
 
     init_filters =64
     
     x = Conv2D(init_filters, (3, 3), strides=(1, 1), name='conv0' )(img_input)
-    x = BatchNormalization(name='bn0')(x)
+    x = BatchNormalization(name='bn0')(x,training)
     x = Activation('relu', name='relu0')(x)
 
     # # conv 2

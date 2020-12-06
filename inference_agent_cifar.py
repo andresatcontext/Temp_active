@@ -1,6 +1,6 @@
 import ray
 
-@ray.remote(num_gpus=1, resources={"gpu_lvl_1" : 1})
+@ray.remote(num_gpus=1)
 class Active_Learning_inference:
     def __init__(self,  config, 
                         un_labeled_set, 
@@ -36,17 +36,17 @@ class Active_Learning_inference:
         self.num_run        = num_run
         self.name_run       = "AL_Inference_"+str(num_run)
         
-        self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
-        self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
-        self.ordered_indexes   = os.path.join(self.evaluation_folder, "ordered_indexes.csv")
+        #self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
+        #self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
+        self.ordered_indexes   = os.path.join(self.run_dir, "ordered_indexes.csv")
         
         self.pre ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
         
         # read the evaluation files 
-        self.df = pd.read_csv(self.evaluation_file ,index_col=0)
-        which_to_use = self.df['accuracy'].idxmax()
-        best_epoch   = self.df.loc[which_to_use]['epoch']
-        weight_file_v2  = "epoch"+str(best_epoch)+".ckpt-"+str(best_epoch)
+        #self.df = pd.read_csv(self.evaluation_file ,index_col=0)
+        #which_to_use = self.df['accuracy'].idxmax()
+        #best_epoch   = self.df.loc[which_to_use]['epoch']
+        #weight_file_v2  = "epoch"+str(best_epoch)+".ckpt-"+str(best_epoch)
         
         self.weight_file       = weight_file #os.path.join(self.run_dir, 'checkpoint', weight_file)
 
@@ -54,14 +54,15 @@ class Active_Learning_inference:
         #############################################################################################
         # SETUP WANDB
         #############################################################################################
-        import wandb
-        self.wandb = wandb
+        #import wandb
+        #self.wandb = wandb
 
-        self.wandb.init(project  = config["PROJECT"]["project"], 
-                        group    = config["PROJECT"]["group"], 
-                        name     = self.name_run,
-                        job_type = "Inference",
-                        config   =  config)
+        #self.wandb.init(project  = config["PROJECT"]["project"], 
+        #                group    = config["PROJECT"]["group"], 
+        ##                name     = "Inference_"+str(num_run),
+         #               job_type = self.group,
+         #               config   =  config)
+        
 
 
         #############################################################################################
@@ -107,13 +108,13 @@ class Active_Learning_inference:
         #############################################################################################
         # GENERATE MODEL
         #############################################################################################
-        
+        self.trainable = False
         # Get the selected backbone
         self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
         
         with tf.name_scope("define_loss"):           
             # get the classifier
-            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], reduction='mean')
+            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], trainable=self.trainable, reduction='mean')
             
             self.c_pred, self.l_pred_w, self.l_pred_s = self.model.build_nework(self.img_input)
             
@@ -143,9 +144,9 @@ class Active_Learning_inference:
         self.saver.restore(self.sess, self.weight_file)
                     
 
-    @ray.method(num_returns = 1)
-    def get_wandb_id(self):
-        return self.run_id
+    #@ray.method(num_returns = 1)
+    #def get_wandb_id(self):
+    #    return self.run_id
 
 
     @ray.method(num_returns = 0)

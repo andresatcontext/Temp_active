@@ -198,23 +198,23 @@ class Active_Learning_train:
         with tf.name_scope("define_weight_decay"):
             moving_ave = tf.train.ExponentialMovingAverage(self.config['TRAIN']["wdecay"]).apply(tf.trainable_variables())
             
-            
         #############################################################################################
         # DEFINE THE PARAMETERS TO TRAIN
         #############################################################################################
         with tf.name_scope("define_train_whole"):
-            optimizer_train_whole = tf.compat.v1.train.MomentumOptimizer(self.learning_rate,self.config['TRAIN']["momentum"]).minimize(self.t_loss_w, var_list=tf.trainable_variables())
+            optimizer_train_whole = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=tf.trainable_variables())
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 with tf.control_dependencies([optimizer_train_whole, global_step_update]):
                     with tf.control_dependencies([moving_ave]):
                         self.train_op_whole = tf.no_op()
 
         with tf.name_scope("define_train_split"):
-            optimizer_train_split = tf.compat.v1.train.MomentumOptimizer(self.learning_rate,self.config['TRAIN']["momentum"]).minimize(self.t_loss_s, var_list=tf.trainable_variables())
+            optimizer_train_split = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=tf.trainable_variables())
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 with tf.control_dependencies([optimizer_train_split, global_step_update]):
                     with tf.control_dependencies([moving_ave]):
                         self.train_op_split = tf.no_op()
+                    
                     
         
         #############################################################################################

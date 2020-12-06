@@ -12,8 +12,8 @@ NETWORK:
 PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
-  group: Random_v0
-  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Random_v0
+  group: Random_v2
+  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Random_v2
   project: Active_Learning_CIFAR
   project_dir: /mnt/Ressources/Andres/Temp_active/runs
   source: CIFAR
@@ -22,7 +22,7 @@ RUNS:
   CYCLES: 10
   SUBSET: -1
   TRIALS: 1
-  test_each: 5
+  test_each: 10
 TEST:
   batch_size: 128
 TRAIN:
@@ -38,5 +38,5 @@ TRAIN:
   start_epoch: 0
   transfer_weight_path: false
   w_c_loss: 1.0
-  w_l_loss: 1.0
+  w_l_loss: 0.0
   wdecay: 0.9995

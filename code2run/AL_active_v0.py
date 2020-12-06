@@ -8,12 +8,13 @@ import time
 import pandas as pd
 import random
 
-config_path = './configs/random_v0.yml'
+config_path = './configs/Active_v2.yml'
 
 with open(config_path) as file:
     # The FullLoader parameter handles the conversion from YAML
     # scalar values to Python the dictionary format
     config = yaml.load(file, Loader=yaml.FullLoader)
+    
 
 # create base dir and gr
 if os.path.exists(config["PROJECT"]["project_dir"]) is False:
@@ -35,6 +36,7 @@ num_classes = len(cifar10_data.classes)
 x_train, y_train, x_test, y_test = cifar10_data.get_data(subtract_mean=True)
 
 indices = list(range(len(x_train)))
+random.seed(101)
 random.shuffle(indices)
 labeled_set = indices[:config["RUNS"]["ADDENDUM"] ]
 unlabeled_set = indices[config["RUNS"]["ADDENDUM"] :]
@@ -51,9 +53,9 @@ config["NETWORK"]["CLASSES"] = cifar10_data.classes
 print(config)
 
 from train_agent_cifar import Active_Learning_train
-#from inference_agent_cifar import Active_Learning_inference
+from inference_agent_cifar import Active_Learning_inference
 
-num_run = 0
+
 for num_run in range(10):
     if num_run==0:
         initial_weight_path = False
@@ -85,7 +87,29 @@ for num_run in range(10):
     NetworkActor.__ray_terminate__.remote()
     
     del NetworkActor
-    
-    num_images = (num_run+2)*config["RUNS"]["ADDENDUM"]
-    labeled_set = indices[: num_images]
-    unlabeled_set = indices[num_images :]
+
+        
+    weight_file = os.path.join(config['PROJECT']['group_dir'],'Stage_'+str(num_run),'checkpoint','epoch200.ckpt-200')
+
+    AL_inference = Active_Learning_inference.remote( config, unlabeled_set, num_run, weight_file)
+    AL_inference.evaluate.remote()
+
+    run_dir   = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
+    ordered_indexes   = os.path.join(run_dir, "ordered_indexes.csv")
+
+    # wait the file qith the scores is generated
+    while True:
+        time.sleep(10)
+        if os.path.isfile(ordered_indexes):
+            break
+
+    # read the scores file and create the new labeled set and unlabeled set to repeat the trainig
+    pd_ordered_indexes = pd.read_csv(ordered_indexes)
+    new_annotated_data = list(pd_ordered_indexes.iloc[:config["RUNS"]["ADDENDUM"]]['indexes'].to_numpy())
+    labeled_set += new_annotated_data
+    unlabeled_set =  list(pd_ordered_indexes.iloc[config["RUNS"]["ADDENDUM"]:]['indexes'].to_numpy())
+
+from test_agent_cifar_all import Active_Learning_test_all
+
+NetworkActor =  Active_Learning_test_all.remote(config)
+NetworkActor.evaluate.remote()

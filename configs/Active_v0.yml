@@ -12,8 +12,8 @@ NETWORK:
 PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
-  group: Active_Learning_v0
-  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Active_Learning_v0
+  group: Active_Learning_v1
+  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Active_Learning_v1
   project: Active_Learning_CIFAR
   project_dir: /mnt/Ressources/Andres/Temp_active/runs
   source: CIFAR

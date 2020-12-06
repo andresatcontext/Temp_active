@@ -63,9 +63,12 @@ class Loss_Lossnet(object):
 
 class Classifier_AL(object):
     """Implement tensoflow yolov3 here"""
-    def __init__(self, backbone, config, reduction='mean'):
+    def __init__(self, backbone, config, trainable=True, reduction='mean'):
         
         self.backbone = backbone
+        
+        self.trainable = trainable
+
         
         # parameters model
         self.num_class      = len(config["CLASSES"])
@@ -82,7 +85,7 @@ class Classifier_AL(object):
         # add backbone
         with tf.compat.v1.variable_scope("Backbone"):
             #ResNet18(classes, input_shape, weight_decay=1e-4)
-            x = self.backbone(input_data,self.num_class)
+            x = self.backbone(input_data,self.num_class,self.trainable)
             c_pred = x[0]
 
         with tf.compat.v1.variable_scope("LossNet"):
@@ -123,38 +126,39 @@ class Classifier_AL(object):
         return self.c_pred, self.l_pred_w, self.l_pred_s
     
     def compute_loss(self,c_true):
-        
+
         # compute the classification loss non reducted
         get_batch_size = tf.shape(c_true)[0]
 
-        
         # Classification loss
         with tf.compat.v1.variable_scope("Classification_loss"):
-            class_loss_non_reducted = losses.categorical_crossentropy(c_true,self.c_pred)
-            c_loss = tf.math.divide(tf.reduce_sum(class_loss_non_reducted),tf.cast(get_batch_size, class_loss_non_reducted.dtype))
-        
+            class_loss_non_reducted = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=self.c_pred)
+            c_loss = tf.reduce_mean(class_loss_non_reducted)
+
         with tf.compat.v1.variable_scope("Reference_Loss_LossNet"):
-            l_true = (class_loss_non_reducted - class_loss_non_reducted[::-1] )[:class_loss_non_reducted.shape[0]//2]
+            l_true = (class_loss_non_reducted - class_loss_non_reducted[::-1] )[:get_batch_size//2]
             # get the value without the gradient
             l_true = tf.stop_gradient(l_true)
 
-        
+
         # value used in the lossnet loss
         one = (2 * tf.math.sign(  tf.clip_by_value( l_true, 0, 1))) - 1
-        
-        
+
         with tf.compat.v1.variable_scope("Learning_loss_loss_whole"):
+
+            l_pred_w = (self.l_pred_w - self.l_pred_w[::-1])[:get_batch_size//2]
             if self.reduction == 'mean':
-                l_loss_w = tf.reduce_sum(tf.clip_by_value(self.margin - one * self.l_pred_w, 0,10000))
-                l_loss_w = tf.math.divide(l_loss_w , tf.cast(tf.shape(self.l_pred_w)[0], l_loss_w.dtype) ) # Note that the size of l_pred is already halved
+                l_loss_w = tf.reduce_sum(tf.clip_by_value(self.margin - one * l_pred_w, 0,10000))
+                l_loss_w = tf.math.divide(l_loss_w , tf.cast(tf.shape(l_pred_w)[0], l_loss_w.dtype) ) # Note that the size of l_pred is already halved
             elif self.reduction == 'none':
                 l_loss_w = tf.clip_by_value(self.margin - one * self.l_pred_w, 0,10000)
             else:
                 NotImplementedError()
 
         with tf.compat.v1.variable_scope("Learning_loss_loss_split"):
+            l_pred_s = (self.l_pred_s - self.l_pred_s[::-1])[:get_batch_size//2]
             if self.reduction == 'mean':
-                l_loss_s = tf.reduce_sum(tf.clip_by_value(self.margin - one * self.l_pred_s, 0,10000))
+                l_loss_s = tf.reduce_sum(tf.clip_by_value(self.margin - one * l_pred_s, 0,10000))
                 l_loss_s = tf.math.divide(l_loss_s , tf.cast(tf.shape(self.l_pred_s)[0], l_loss_s.dtype) ) # Note that the size of l_pred is already halved
             elif self.reduction == 'none':
                 l_loss_s = tf.clip_by_value(self.margin - one * self.l_pred_s, 0,10000)
@@ -167,5 +171,5 @@ class Classifier_AL(object):
         self.l_true  = l_true
         self.class_loss_non_reducted = class_loss_non_reducted
 
-        return self.c_loss, self.l_loss_w, self.l_loss_s, self.l_true
+        return self.c_loss, self.l_loss_w, self.l_loss_s
     
