@@ -1,1 +1,2 @@
-from .Classifier_AL import Classifier_AL
+from .Classifier_AL import Lossnet
+from .Classifier_AL import Loss_Lossnet

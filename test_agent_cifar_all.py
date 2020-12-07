@@ -71,10 +71,10 @@ class Active_Learning_test_all:
                                        shuffle=False)
         
         wh = self.config["NETWORK"]["INPUT_SIZE"]
-        num_cls = len(self.config["NETWORK"]["CLASSES"])
+        self.num_class = len(self.config["NETWORK"]["CLASSES"])
         
         features_shape = [None, wh, wh, 3]
-        labels_shape = [None, num_cls]
+        labels_shape = [None, self.num_class]
         
         tf_data = tf.data.Dataset.from_generator(lambda: train_gen, 
                                                  output_types=(tf.float32, tf.float32),
@@ -88,16 +88,23 @@ class Active_Learning_test_all:
         # GENERATE MODEL
         #############################################################################################
         
+        self.trainable = False
         # Get the selected backbone
         self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
         
-        with tf.name_scope("define_loss"):           
-            # get the classifier
-            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], trainable=self.trainable, reduction='mean')
+        with tf.compat.v1.variable_scope("Backbone"):
+            #ResNet18(classes, input_shape, weight_decay=1e-4)
+            c_pred_features = self.backbone(self.img_input, self.num_class, self.trainable)
+            self.c_pred = c_pred_features[0]
+        
+        with tf.compat.v1.variable_scope("LossNet"):
+            self.l_pred_w, self.l_pred_s, self.embedding_whole, self.embedding_split = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
             
-            self.c_pred, self.l_pred_w, self.l_pred_s = self.model.build_nework(self.img_input)
-
-            self.c_loss, self.l_loss_w, self.l_loss_s = self.model.compute_loss(self.c_true)
+        with tf.name_scope("Define_loss"):           
+            # get the classifier
+            self.Losses_compute = core.Loss_Lossnet(margin = self.config["NETWORK"]["MARGIN"])
+            self.c_loss_nr, self.c_loss, self.l_loss_w, self.l_loss_s = self.Losses_compute.compute_loss(self.c_true, self.c_pred, self.l_pred_w, self.l_pred_s)
+        
         
 
         #############################################################################################
@@ -116,10 +123,10 @@ class Active_Learning_test_all:
                 self.Categorical_Accuracy = tf.cast(correct_prediction, tf.float32)
                 
             with tf.name_scope('MAE_learning_loss_whole'):
-                self.MAE_whole = tf.math.abs(tf.math.subtract(self.model.class_loss_non_reducted, self.l_loss_w))
+                self.MAE_whole = tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_w))
 
             with tf.name_scope('MAE_learning_loss_split'):
-                self.MAE_split = tf.math.abs(tf.math.subtract(self.model.class_loss_non_reducted, self.l_loss_s))
+                self.MAE_split = tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_s))
                 
                 
         #############################################################################################
@@ -209,7 +216,7 @@ class Active_Learning_test_all:
 
                         result_step= self.sess.run([self.c_pred,
                                                     self.c_true,
-                                                    self.model.class_loss_non_reducted,
+                                                    self.c_loss_nr,
                                                     self.l_pred_w])
 
                         if step==0:

@@ -12,14 +12,14 @@ NETWORK:
 PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
-  group: CIFAR_LOSSNET_v2
-  group_dir: /disk3/Active_Learning_test/CIFAR_LOSSNET_v2
+  group: Classif_all_data_wl
+  group_dir: /disk3/Active_Learning_test/Classif_all_data_wl
   project: Active_Learning_CIFAR
   project_dir: /disk3/Active_Learning_test
   source: CIFAR
 RUNS:
   ADDENDUM: 1000
-  CYCLES: 10
+  CYCLES: 1
   SUBSET: -1
   TRIALS: 1
   test_each: 1
@@ -27,11 +27,12 @@ TEST:
   batch_size: 128
 TRAIN:
   Data_augementation: true
-  EPOCH_SLIT: 80
-  EPOCH_WARMUP: 2
-  EPOCH_WHOLE: 120
+  EPOCH_SLIT: 10
+  EPOCH_WARMUP: 0
+  EPOCH_WHOLE: 40
   MILESTONES:
-  - 160
+  - 25
+  - 35
   batch_size: 128
   gamma: 0.1
   lr: 0.001
@@ -39,4 +40,4 @@ TRAIN:
   transfer_weight_path: false
   w_c_loss: 1.0
   w_l_loss: 1.0
-  wdecay: 0.9995
+  wdecay: 0.995

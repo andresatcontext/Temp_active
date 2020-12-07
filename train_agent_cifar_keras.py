@@ -4,7 +4,7 @@ import ray
 
 
 
-@ray.remote(num_gpus=1, resources={"gpu_lvl_1" : 1})
+@ray.remote(num_gpus=1)
 class Active_Learning_train:
     def __init__(self,   config, 
                          labeled_set,
@@ -36,15 +36,19 @@ class Active_Learning_train:
         #############################################################################################
         self.config          = config
         self.num_run         = num_run
-        self.name_run        = "AL_Train_"+str(num_run)
-        self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
+        self.group           = "Stage_"+str(num_run)
+        self.name_run        = "Train_"+self.group 
+        
+        self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group )
         self.user            = get_user()
         self.test_run_id     = None
         self.stop_flag       = False
         self.training_thread = None
+        
         self.num_data_train  = len(labeled_set) 
         self.initial_weight_path = initial_weight_path
         self.transfer_weight_path = self.config['TRAIN']["transfer_weight_path"]
+        self.num_class       = len(self.config["NETWORK"]["CLASSES"])
         
         self.pre ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
 
@@ -58,6 +62,7 @@ class Active_Learning_train:
                 os.mkdir(config["PROJECT"]["group_dir"])
             else:  
                 shutil.rmtree(self.run_dir)
+                
         if os.path.exists(self.run_dir) is False:
             os.mkdir(self.run_dir)
 
@@ -69,8 +74,8 @@ class Active_Learning_train:
         self.wandb = wandb
         self.wandb.init(project  = config["PROJECT"]["project"], 
                         group    = config["PROJECT"]["group"], 
-                        name     = self.name_run,
-                        job_type = "Train", 
+                        name     = "Train_"+str(num_run),
+                        job_type = self.group ,
                         sync_tensorboard = True,
                         config = config)
         
@@ -107,10 +112,9 @@ class Active_Learning_train:
                                        batch_size=self.config["TRAIN"]["batch_size"])
         
         wh = self.config["NETWORK"]["INPUT_SIZE"]
-        num_cls = len(self.config["NETWORK"]["CLASSES"])
         
         features_shape = [None, wh, wh, 3]
-        labels_shape = [None, num_cls]
+        labels_shape = [None, self.num_class ]
         
 
         tf_data = tf.data.Dataset.from_generator(lambda: train_gen, 
@@ -127,28 +131,36 @@ class Active_Learning_train:
         #############################################################################################
         # GENERATE MODEL
         #############################################################################################
+        self.trainable = True
         
         # Get the selected backbone
         self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
         
-        with tf.name_scope("define_loss"):           
+        inputs = tf.keras.Input(shape=(wh, wh, 3))
+  
+        
+        with tf.compat.v1.variable_scope("Backbone"):
+            #ResNet18(classes, input_shape, weight_decay=1e-4)
+            c_pred_features = self.backbone(self.img_input, self.num_class, self.trainable)
+            self.c_pred = c_pred_features[0]
+        
+        with tf.compat.v1.variable_scope("LossNet"):
+            self.l_pred_w, self.l_pred_s, self.embedding_whole, self.embedding_split = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
+            
+        with tf.name_scope("Define_loss"):           
             # get the classifier
-            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], reduction='mean')
-            
-            self.c_pred, self.l_pred_w, self.l_pred_s = self.model.build_nework(self.img_input)
-
-            self.c_loss, self.l_loss_w, self.l_loss_s, self.l_true = self.model.compute_loss(self.c_true)
-            
-            # get global variables
-            self.net_var = tf.global_variables()
+            self.Losses_compute = core.Loss_Lossnet(margin = self.config["NETWORK"]["MARGIN"])
+            self.c_loss_nr, self.c_loss, self.l_loss_w, self.l_loss_s = self.Losses_compute.compute_loss(self.c_true, self.c_pred, self.l_pred_w, self.l_pred_s)
             
             self.t_loss_w =  ((self.config['TRAIN']["w_c_loss"]*self.c_loss) + \
                               (self.config['TRAIN']["w_l_loss"] * self.l_loss_w))
             
-            
             self.t_loss_s =  ((self.config['TRAIN']["w_c_loss"]*self.c_loss) + \
                               (self.config['TRAIN']["w_l_loss"] * self.l_loss_s))
         
+        model = tf.keras.Model(inputs=inputs, outputs=[self.l_pred_w, self.l_pred_s, self.embedding_whole, self.embedding_split])
+        model.save("my_model")
+
             
         #############################################################################################
         # GLOBAL PROGRESS
@@ -198,23 +210,39 @@ class Active_Learning_train:
         with tf.name_scope("define_weight_decay"):
             moving_ave = tf.train.ExponentialMovingAverage(self.config['TRAIN']["wdecay"]).apply(tf.trainable_variables())
             
+        
         #############################################################################################
         # DEFINE THE PARAMETERS TO TRAIN
         #############################################################################################
+        self.backbone_trainable = []
+        for var in tf.trainable_variables():
+            var_name = var.op.name
+            var_name_mess = str(var_name).split('/')
+            if var_name_mess[0] == 'Backbone':
+                self.backbone_trainable.append(var)
+                    
+        self.lossnet_trainable = []
+        for var in tf.trainable_variables():
+            var_name = var.op.name
+            var_name_mess = str(var_name).split('/')
+            if var_name_mess[0] == 'LossNet':
+                self.lossnet_trainable.append(var)
+        
         with tf.name_scope("define_train_whole"):
-            optimizer_train_whole = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=tf.trainable_variables())
+            op_w_backbone = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=self.backbone_trainable)
+            op_w_lossnet  = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=self.lossnet_trainable )
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                with tf.control_dependencies([optimizer_train_whole, global_step_update]):
+                with tf.control_dependencies([op_w_backbone, op_w_lossnet, global_step_update]):
                     with tf.control_dependencies([moving_ave]):
                         self.train_op_whole = tf.no_op()
 
         with tf.name_scope("define_train_split"):
-            optimizer_train_split = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=tf.trainable_variables())
+            op_s_backbone = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=self.backbone_trainable)
+            op_s_lossnet  = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=self.lossnet_trainable )
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                with tf.control_dependencies([optimizer_train_split, global_step_update]):
+                with tf.control_dependencies([op_s_backbone, op_s_lossnet, global_step_update]):
                     with tf.control_dependencies([moving_ave]):
                         self.train_op_split = tf.no_op()
-                    
                     
         
         #############################################################################################
@@ -227,10 +255,10 @@ class Active_Learning_train:
                 self.Categorical_Accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
                 
             with tf.name_scope('MAE_learning_loss_whole'):
-                self.MAE_whole = tf.reduce_mean(tf.math.abs(tf.math.subtract(self.model.class_loss_non_reducted, self.l_loss_w)))
+                self.MAE_whole = tf.reduce_mean(tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_w)))
 
             with tf.name_scope('MAE_learning_loss_split'):
-                self.MAE_split = tf.reduce_mean(tf.math.abs(tf.math.subtract(self.model.class_loss_non_reducted, self.l_loss_s)))
+                self.MAE_split = tf.reduce_mean(tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_s)))
 
         #############################################################################################
         # LOAD PREVIUS TRAINED MODEL
@@ -246,7 +274,7 @@ class Active_Learning_train:
                     ckpt_var = reader.get_variable_to_shape_map()
 
                     var_to_restore = []
-                    for v in self.net_var:
+                    for v in tf.global_variables():
                         dict_name = v.name.split(':')[0]
                         if dict_name in ckpt_var:
                             if tuple(ckpt_var[dict_name]) == v.shape:
@@ -254,7 +282,7 @@ class Active_Learning_train:
                                 var_to_restore.append(v)
                 except Exception as e:
                     print( self.pre ,str(e))
-                    var_to_restore = self.net_var
+                    var_to_restore = tf.global_variables()
 
                 self.loader = tf.compat.v1.train.Saver(var_to_restore)
             else:
@@ -322,7 +350,7 @@ class Active_Learning_train:
                 checkpoint_dir = os.path.join(self.run_dir, 'checkpoint')
                 if not os.path.exists(checkpoint_dir):
                     os.mkdir(checkpoint_dir)
-                print( self.pre ,'Path' , self.initial_weight_path)
+
                 # load an initial weight
                 if self.initial_weight_path is not False:
                     try:
@@ -348,12 +376,6 @@ class Active_Learning_train:
                         self.run_watcher.update_run.remote(name=self.name_run, status="Idle")
                         break
 
-                    # define witch graph to optimize
-                    if epoch <= self.split_epoch:
-                        train_op = self.train_op_whole
-                    else:
-                        train_op = self.train_op_split
-
 
                     m_acc_e = np.array([])
                     mae_e   = np.array([])
@@ -366,14 +388,14 @@ class Active_Learning_train:
                             break
 
                         if epoch <= self.split_epoch: 
-                            result_step= self.sess.run([train_op, 
+                            result_step= self.sess.run([self.train_op_whole, 
                                                         self.t_loss_w,
                                                         self.merged,
                                                         self.Categorical_Accuracy,
                                                         self.MAE_whole,
                                                         self.global_step])
                         else:
-                            result_step= self.sess.run([train_op, 
+                            result_step= self.sess.run([self.train_op_split, 
                                                         self.t_loss_s,
                                                         self.merged,
                                                         self.Categorical_Accuracy,
@@ -430,7 +452,7 @@ class Active_Learning_train:
                         
                         ckpt_file = os.path.join(checkpoint_dir, "epoch"+str(current_epoch)+".ckpt")
                         self.saver.save(self.sess, ckpt_file, global_step=current_epoch)
-
+                        """
                         try:
                             detection_test = local_file("test_agent_cifar").Active_Learning_test
                             tester = detection_test.remote( self.config,
@@ -447,7 +469,7 @@ class Active_Learning_train:
                         except Exception as e:
                             print( self.pre ,'error')
                             print( self.pre ,e)
-                        """
+                        
 
                         if self.val_dataset_name is not None and self.val_source is not None:
                             try:

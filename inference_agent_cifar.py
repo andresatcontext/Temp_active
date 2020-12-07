@@ -92,7 +92,7 @@ class Active_Learning_inference:
                                        shuffle=False)
         
         wh = self.config["NETWORK"]["INPUT_SIZE"]
-        num_cls = len(self.config["NETWORK"]["CLASSES"])
+        self.num_class = len(self.config["NETWORK"]["CLASSES"])
         
         features_shape = [None, wh, wh, 3]
         labels_shape = [None]
@@ -109,17 +109,17 @@ class Active_Learning_inference:
         # GENERATE MODEL
         #############################################################################################
         self.trainable = False
+        
         # Get the selected backbone
         self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
         
-        with tf.name_scope("define_loss"):           
-            # get the classifier
-            self.model = core.Classifier_AL(self.backbone, self.config["NETWORK"], trainable=self.trainable, reduction='mean')
-            
-            self.c_pred, self.l_pred_w, self.l_pred_s = self.model.build_nework(self.img_input)
-            
-            self.embedding = self.model.emb_w
-            
+        with tf.compat.v1.variable_scope("Backbone"):
+            #ResNet18(classes, input_shape, weight_decay=1e-4)
+            c_pred_features = self.backbone(self.img_input, self.num_class, self.trainable)
+            self.c_pred = c_pred_features[0]
+        
+        with tf.compat.v1.variable_scope("LossNet"):
+            self.l_pred_w, self.l_pred_s, self.embedding_whole, self.embedding_split = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
 
         #############################################################################################
         # GLOBAL PROGRESS
@@ -172,7 +172,7 @@ class Active_Learning_inference:
             result_step= self.sess.run([self.c_pred,
                                         self.l_pred_w,
                                         self.l_pred_s,
-                                        self.embedding,
+                                        self.embedding_whole,
                                         self.indexes])
 
             

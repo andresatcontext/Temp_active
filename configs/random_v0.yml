@@ -12,10 +12,10 @@ NETWORK:
 PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
-  group: Random_v2
-  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Random_v2
+  group: Random_v4
+  group_dir: /disk3/Active_Learning_test/Random_v4
   project: Active_Learning_CIFAR
-  project_dir: /mnt/Ressources/Andres/Temp_active/runs
+  project_dir: /disk3/Active_Learning_test
   source: CIFAR
 RUNS:
   ADDENDUM: 1000

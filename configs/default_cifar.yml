@@ -13,9 +13,9 @@ PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
   group: Classif_all_data
-  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Classif_all_data
+  group_dir: /disk3/Active_Learning_test/Classif_all_data
   project: Active_Learning_CIFAR
-  project_dir: /mnt/Ressources/Andres/Temp_active/runs
+  project_dir: /disk3/Active_Learning_test
   source: CIFAR
 RUNS:
   ADDENDUM: 1000
@@ -28,7 +28,7 @@ TEST:
 TRAIN:
   Data_augementation: true
   EPOCH_SLIT: 10
-  EPOCH_WARMUP: 2
+  EPOCH_WARMUP: 0
   EPOCH_WHOLE: 40
   MILESTONES:
   - 25

@@ -16,9 +16,6 @@ with open(config_path) as file:
     config = yaml.load(file, Loader=yaml.FullLoader)
     
 
-config["PROJECT"]["group"] = 'Random_no_lloss'
-config["PROJECT"]["group_dir"] = "/mnt/Ressources/Andres/Temp_active/runs/Random_no_lloss"
-
 # create base dir and gr
 if os.path.exists(config["PROJECT"]["project_dir"]) is False:
     os.mkdir(config["PROJECT"]["project_dir"])
@@ -100,3 +97,9 @@ for num_run in range(10):
     num_images = (num_run+2)*config["RUNS"]["ADDENDUM"]
     labeled_set = indices[: num_images]
     unlabeled_set = indices[num_images :]
+    
+    
+from test_agent_cifar_all import Active_Learning_test_all
+
+NetworkActor =  Active_Learning_test_all.remote(config)
+NetworkActor.evaluate.remote()

@@ -8,16 +8,13 @@ import time
 import pandas as pd
 import random
 
-config_path = './configs/Active_v0.yml'
+config_path = './configs/default_cifar_wl.yml'
 
 with open(config_path) as file:
     # The FullLoader parameter handles the conversion from YAML
     # scalar values to Python the dictionary format
     config = yaml.load(file, Loader=yaml.FullLoader)
     
-config["PROJECT"]["group"] = 'Alldata_no_al'
-config["PROJECT"]["group_dir"] = "/mnt/Ressources/Andres/Temp_active/runs/Alldata_no_al"
-
 # create base dir and gr
 if os.path.exists(config["PROJECT"]["project_dir"]) is False:
     os.mkdir(config["PROJECT"]["project_dir"])
@@ -55,9 +52,7 @@ config["NETWORK"]["CLASSES"] = cifar10_data.classes
 print(config)
 
 
-
-#from train_agent_cifar import Active_Learning_train
-from test_agent_cifar_all import Active_Learning_test_all
+from train_agent_cifar import Active_Learning_train
 
 
 initial_weight_path = False
@@ -67,6 +62,18 @@ num_run=0
 #NetworkActor.start_training.remote()
 
 
+# wait until the model finish training
+#while True:
+#    time.sleep(10)
+#    progress_id = NetworkActor.isTraining.remote()
+#    response = ray.get(progress_id)
+#    if not response:
+#        break
+        
+#NetworkActor.__ray_terminate__.remote()
+#del NetworkActor
+
+from test_agent_cifar_all import Active_Learning_test_all
 
 NetworkActor =  Active_Learning_test_all.remote(config)
 NetworkActor.evaluate.remote()
