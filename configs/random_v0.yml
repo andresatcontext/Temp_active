@@ -12,17 +12,17 @@ NETWORK:
 PROJECT:
   Backbone: resnet18
   dataset_name: CIFAR
-  group: Random_v4
-  group_dir: /disk3/Active_Learning_test/Random_v4
+  group: Random_v7
+  group_dir: /mnt/Ressources/Andres/Temp_active/runs/Random_v7
   project: Active_Learning_CIFAR
-  project_dir: /disk3/Active_Learning_test
+  project_dir: /mnt/Ressources/Andres/Temp_active/runs
   source: CIFAR
 RUNS:
   ADDENDUM: 1000
   CYCLES: 10
   SUBSET: -1
   TRIALS: 1
-  test_each: 10
+  test_each: 5
 TEST:
   batch_size: 128
 TRAIN:

@@ -33,7 +33,7 @@ from data_utils import CIFAR10Data
 # Load data
 cifar10_data = CIFAR10Data()
 num_classes = len(cifar10_data.classes)
-x_train, y_train, x_test, y_test = cifar10_data.get_data(subtract_mean=True)
+x_train, y_train, x_test, y_test = cifar10_data.get_data(normalize_data=False)
 
 indices = list(range(len(x_train)))
 random.seed(101)
@@ -51,14 +51,11 @@ config["NETWORK"]["INPUT_SIZE"] =  x_train[0].shape[0]
 config["NETWORK"]["CLASSES"] = cifar10_data.classes
 config["TRAIN"]["w_l_loss"] = 0.0
 
-from test_agent_cifar_all import Active_Learning_test_all
-
-NetworkActor =  Active_Learning_test_all.remote(config)
-NetworkActor.evaluate.remote()
 
 print(config)
 
 from train_agent_cifar import Active_Learning_train
+from test_agent_cifar_stage import Active_Learning_test_stage
 #from inference_agent_cifar import Active_Learning_inference
 
 num_run = 0
@@ -99,7 +96,11 @@ for num_run in range(10):
     unlabeled_set = indices[num_images :]
     
     
-from test_agent_cifar_all import Active_Learning_test_all
+    #NetworkActor_test =  Active_Learning_test_stage.remote(config,run_num)
+    #NetworkActor_test.evaluate.remote()
+    
+    
+#from test_agent_cifar_all import Active_Learning_test_all
 
-NetworkActor =  Active_Learning_test_all.remote(config)
-NetworkActor.evaluate.remote()
+#NetworkActor =  Active_Learning_test_all.remote(config)
+#NetworkActor.evaluate.remote()

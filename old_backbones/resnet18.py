@@ -79,7 +79,7 @@ def batch_norm(x, is_training=True, scope='batch_norm'):
                                         center=True, scale=True, updates_collections=None,
                                         is_training=is_training, scope=scope)
 
-
+    
 def resnet18( img_input, classes, is_training=True):
     ch = 64
 

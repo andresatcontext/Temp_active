@@ -52,7 +52,7 @@ class Active_Learning_test_all:
             from data_utils import CIFAR10Data
             # Load data
             cifar10_data = CIFAR10Data()
-            _, _, x_test, y_test = cifar10_data.get_data(subtract_mean=False)
+            _, _, x_test, y_test = cifar10_data.get_data(normalize_data=True)
             
             #x_test = x_test[test_set]
             #y_test = y_test[test_set]

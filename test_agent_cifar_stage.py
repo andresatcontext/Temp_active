@@ -1,13 +1,8 @@
 import ray
 
 @ray.remote(num_gpus=1)
-class Active_Learning_test:
-    def __init__(self,  config, 
-                        test_set, 
-                        num_run,
-                        epoch,
-                        weight_file, 
-                        wandb_id=None):
+class Active_Learning_test_stage:
+    def __init__(self,  config , num_run):
         
         
         #############################################################################################
@@ -31,60 +26,48 @@ class Active_Learning_test:
         #############################################################################################
         # PARAMETERS 
         #############################################################################################
-        self.config         = config
-        self.source         = config["PROJECT"]["source"]
-        self.run_dir        = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
+        self.config        = config
+        self.source        = config["PROJECT"]["source"]
+        self.trainable     = False
+        self.num_run       = num_run
         
+
+        self.run_dir       = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
+        self.group         = "Stage_"+str(num_run)
+        self.name_run      = "Test_"+self.group 
         
-        self.group           = "Stage_"+str(num_run)
-        self.name_run        = "Test_"+self.group 
-        
-        self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group )
-        self.pre ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
-        
-        self.epoch          = epoch
-        
-        self.weight_name       = weight_file
-        self.weight_file       = os.path.join(self.run_dir, 'checkpoint', weight_file)
+        self.run_dir       = os.path.join(config["PROJECT"]["group_dir"],self.group )
+        self.pre           ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
         
         self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
         self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
-
+        
         try:
             os.mkdir(self.evaluation_folder)
         except:
             pass
-        
-        if not os.path.isfile(self.evaluation_file ) or epoch==0:
-            self.df = pd.DataFrame(columns=['epoch','accuracy'])
-            self.df.to_csv(self.evaluation_file )
-        else:
-            self.df = pd.read_csv(self.evaluation_file ,index_col=0)
-        
+
+            
+        path = os.path.join(self.run_dir,'checkpoint')
+        path_check_point_file = os.path.join(path,'checkpoint')
+        temp  = pd.read_csv(path_check_point_file,sep="\"",header=None,names=['1','paths','n'])
+        epochs_checked = [int(i.split('-')[-1]) for i in set(temp.paths.values)]
+        epochs_checked.sort()
+        self.epochs_checked = epochs_checked
         
         #############################################################################################
         # SETUP WANDB
         #############################################################################################
         import wandb
         self.wandb = wandb
+        
+        self.wandb.init( project  = self.config["PROJECT"]["project"], 
+                        group    = self.config["PROJECT"]["group"], 
+                        name     = "Test_"+str(num_run),
+                        job_type = self.group,
+                        config   = self.config   )
 
-        if wandb_id is None:
-            self.wandb.init(project  = config["PROJECT"]["project"], 
-                            group    = config["PROJECT"]["group"], 
-                            name     = "Test_"+str(num_run),
-                            job_type = self.group,
-                            config   =  config)
-            self.run_id = wandb.run.id
-        else:
-            self.wandb.init(project  = config["PROJECT"]["project"], 
-                            group    = config["PROJECT"]["group"], 
-                            name     = "Test_"+str(num_run),
-                            job_type = self.group,
-                            id=wandb_id, 
-                            resume=True,
-                            config   =  config)
-            self.run_id = wandb_id
-            
+
 
         #############################################################################################
         # LOAD DATA
@@ -128,11 +111,13 @@ class Active_Learning_test:
         #############################################################################################
         # GENERATE MODEL
         #############################################################################################
-        self.trainable      = False
+        
+        self.trainable = False
         # Get the selected backbone
         self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
         
         with tf.compat.v1.variable_scope("Backbone"):
+            #ResNet18(classes, input_shape, weight_decay=1e-4)
             c_pred_features = self.backbone(self.img_input, self.num_class, self.trainable)
             self.c_pred = c_pred_features[0]
         
@@ -143,6 +128,7 @@ class Active_Learning_test:
             # get the classifier
             self.Losses_compute = core.Loss_Lossnet(margin = self.config["NETWORK"]["MARGIN"])
             self.c_loss_nr, self.c_loss, self.l_loss_w, self.l_loss_s = self.Losses_compute.compute_loss(self.c_true, self.c_pred, self.l_pred_w, self.l_pred_s)
+        
         
 
         #############################################################################################
@@ -180,8 +166,7 @@ class Active_Learning_test:
         #TODO this should load a checkpoint of a training based in the training epoch or
         # this could load any saved model for transfer learning
         self.saver = tf.compat.v1.train.Saver(tf.global_variables())
-        print(self.pre, 'Restoring from '+str(self.weight_file))
-        self.saver.restore(self.sess, self.weight_file)
+
                     
 
     @ray.method(num_returns = 1)
@@ -200,89 +185,111 @@ class Active_Learning_test:
         import pandas as pd
 
 
-        #############################################################################################
-        # INFER THE TEST SET
-        #############################################################################################
-        list_np = []
-        for step in range(self.evaluation_steps):
+        for epoch in self.epochs_checked:
+        #
 
-            result_step= self.sess.run([self.c_pred,
-                                        self.c_true,
-                                        self.c_loss_nr,
-                                        self.l_pred_w])
-            
-            if step==0:
-                for res in result_step:
-                    list_np.append(res)
-    
+            weight_file  = os.path.join(self.run_dir, 'checkpoint',  "epoch"+str(epoch)+".ckpt-"+str(epoch))
+
+            if not os.path.isfile(self.evaluation_file ) or epoch==0:
+                df = pd.DataFrame(columns=['epoch','accuracy'])
+                df.to_csv(self.evaluation_file )
             else:
-                for i in range(len(result_step)):
-                    list_np[i] = np.concatenate([list_np[i], result_step[i]])
+                df = pd.read_csv(self.evaluation_file ,index_col=0)
 
-        #############################################################################################
-        # GET VALUES
-        #############################################################################################
-        pred_array = np.argmax(list_np[0],axis=1)
-        annot_array = np.argmax(list_np[1],axis=1)
-        scores_array = np.max(list_np[0],axis=1)
-        correctness_array = (pred_array==annot_array).astype(np.int64)
-        
-        true_loss = list_np[2]
-        pred_loss = list_np[3]
 
-        
-        #############################################################################################
-        # COMPUTE METRICS
-        #############################################################################################
-        
-        ######## Classification
-        
-        # Compute the F1 score, also known as balanced F-score or F-measure
-        f1 = metrics.f1_score(annot_array, pred_array, average='macro')
-        self.wandb.log({'F1 score': f1}, step=self.epoch)
-        
-        # Accuracy classification score
-        accuracy = metrics.accuracy_score(annot_array, pred_array)
-        self.wandb.log({'Test: Classification Accuracy': accuracy}, step=self.epoch)
-        
-        # Compute Receiver operating characteristic (ROC)
-        false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
-        fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
-        self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=self.epoch)
-        
-        #  Area Under the Curve (AUC) 
-        res_auc = metrics.auc(false_positives_axe, true_positives_axe)
-        self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=self.epoch)  
-        
-        # Compute confusion matrix to evaluate the accuracy of a classification.
-        if len(self.config["NETWORK"]["CLASSES"])<200:
-            cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
-            fig_cm = self.Plot_confusion_matrix(cm)
-            self.wandb.log({'Confusion Matrix' : fig_cm}, step=self.epoch)
-                   
-        ######## Regression (loss estimation)
-        
-        mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
-        self.wandb.log({'Mean absolute error': mae_v1}, step=self.epoch)
+            print(self.pre, 'Restoring from '+str(weight_file))
+            self.saver.restore(self.sess, weight_file)
 
-        
-        evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
-        self.wandb.log({'Explained variance': evs_v1}, step=self.epoch)
-                
-        mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
-        self.wandb.log({'Mean squared error': mse_v1}, step=self.epoch)
+            #############################################################################################
+            # INFER THE TEST SET
+            #############################################################################################
+            list_np = []
+            for step in range(self.evaluation_steps):
 
-        #############################################################################################
-        # Save accuracy and epoch to select best model
-        #############################################################################################
-        temp_df= pd.DataFrame({'epoch':[self.epoch],'accuracy':[accuracy]})
-        
-        pd.concat([self.df,temp_df],ignore_index=True).to_csv(self.evaluation_file)
-        
-        to_print = 'Test || '
-        to_print += "Epoch: %2d || "%(self.epoch)
-        to_print += "Accuracy: %.2f || "%(100*accuracy)
-        print(self.pre, to_print)
+                result_step= self.sess.run([self.c_pred,
+                                            self.c_true,
+                                            self.c_loss_nr,
+                                            self.l_pred_w])
+
+                if step==0:
+                    for res in result_step:
+                        list_np.append(res)
+
+                else:
+                    for i in range(len(result_step)):
+                        list_np[i] = np.concatenate([list_np[i], result_step[i]])
+
+            #############################################################################################
+            # GET VALUES
+            #############################################################################################
+
+            pred_array = np.argmax(list_np[0],axis=1)
+            annot_array = np.argmax(list_np[1],axis=1)
+            scores_array = np.max(list_np[0],axis=1)
+            correctness_array = (pred_array==annot_array).astype(np.int64)
+
+            true_loss = list_np[2]
+            pred_loss    = list_np[3]
+
+            print(self.pre,"Length of the test: ", len(pred_array))
+
+            #############################################################################################
+            # COMPUTE METRICS
+            #############################################################################################
+
+            ######## Classification
+
+            # Compute the F1 score, also known as balanced F-score or F-measure
+            f1 = metrics.f1_score(annot_array, pred_array, average='macro')
+            self.wandb.log({'F1 score': f1}, step=epoch)
+
+            # Accuracy classification score
+            accuracy = metrics.accuracy_score(annot_array, pred_array)
+            self.wandb.log({'Test: Classification Accuracy': accuracy}, step=epoch)
+
+            # Compute Receiver operating characteristic (ROC)
+            false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
+            fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
+            self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=epoch)
+
+            #  Area Under the Curve (AUC) 
+            res_auc = metrics.auc(false_positives_axe, true_positives_axe)
+            self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=epoch)  
+
+            # Compute confusion matrix to evaluate the accuracy of a classification.
+            if len(self.config["NETWORK"]["CLASSES"])<200:
+                cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
+                fig_cm = self.Plot_confusion_matrix(cm)
+                self.wandb.log({'Confusion Matrix' : fig_cm}, step=epoch)
+
+            ######## Regression (loss estimation)
+
+            mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
+            self.wandb.log({'Mean absolute error': mae_v1}, step=epoch)
+
+            evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
+            self.wandb.log({'Explained variance': evs_v1}, step=epoch)
+
+            mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
+            self.wandb.log({'Mean squared error': mse_v1}, step=epoch)
+
+
+            #############################################################################################
+            # Save accuracy and epoch to select best model
+            #############################################################################################
+            temp_df= pd.DataFrame({'epoch':[epoch],'accuracy':[accuracy]})
+
+            df = pd.concat([df,temp_df],ignore_index=True)
+
+            to_print = 'Test || '
+            to_print += "Epoch: %2d || "%(epoch)
+            to_print += "Accuracy: %.2f || "%(100*accuracy)
+
+            print(self.pre, to_print)
+        # for
+
+        df.to_csv(self.evaluation_file)
+
 
         
 

@@ -52,45 +52,19 @@ print(config)
 
 from train_agent_cifar import Active_Learning_train
 from test_agent_cifar_all import Active_Learning_test_all
+
+
+from train_agent_cifar import Active_Learning_train
+from test_agent_cifar_all import Active_Learning_test_all
+#from test_agent_cifar_stage import Active_Learning_test_stage
 #from inference_agent_cifar import Active_Learning_inference
 
-num_run = 0
-for num_run in range(10):
-    if num_run==0:
-        initial_weight_path = False
-    else:
-        initial_weight_path = os.path.join(config['PROJECT']['group_dir'],'Stage_'+str(num_run-1),'checkpoint','epoch200.ckpt-200')
-        
-        
-    NetworkActor =  Active_Learning_train.remote(config, labeled_set, test_set,  num_run, initial_weight_path)
-    NetworkActor.start_training.remote()
-    
-    # Wait util the model is training
-    while True:
-        time.sleep(10)
-        try:
-            progress_id = NetworkActor.isTraining.remote()
-            response = ray.get(progress_id)
-            break
-        except:
-            pass
-        
-    # wait until the model finish training
-    while True:
-        time.sleep(10)
-        progress_id = NetworkActor.isTraining.remote()
-        response = ray.get(progress_id)
-        if not response:
-            break
-    
-    NetworkActor.__ray_terminate__.remote()
-    
-    del NetworkActor
-    
-    num_images = (num_run+2)*config["RUNS"]["ADDENDUM"]
-    labeled_set = indices[: num_images]
-    unlabeled_set = indices[num_images :]
-    
-    
+num_run = 50000
+initial_weight_path = False
+
+NetworkActor =  Active_Learning_train.remote(config, labeled_set, test_set,  num_run, initial_weight_path)
+NetworkActor.start_training.remote()
+
 NetworkActor =  Active_Learning_test_all.remote(config)
 NetworkActor.evaluate.remote()
+

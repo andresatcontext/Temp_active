@@ -70,6 +70,7 @@ class Active_Learning_train:
         #############################################################################################
         # SETUP WANDB
         #############################################################################################
+        '''
         import wandb
         self.wandb = wandb
         self.wandb.init(project  = config["PROJECT"]["project"], 
@@ -79,7 +80,7 @@ class Active_Learning_train:
                         sync_tensorboard = True,
                         config = config)
         
-            
+            '''
         
         #############################################################################################
         # LOAD DATA
@@ -88,7 +89,7 @@ class Active_Learning_train:
             from data_utils import CIFAR10Data
             # Load data
             cifar10_data = CIFAR10Data()
-            x_train, y_train, _, _ = cifar10_data.get_data(subtract_mean=False)
+            x_train, y_train, _, _ = cifar10_data.get_data(normalize_data=True)
 
             x_train = x_train[labeled_set]
             y_train = y_train[labeled_set]
@@ -103,9 +104,14 @@ class Active_Learning_train:
         #############################################################################################
         from tensorflow.keras.preprocessing.image import ImageDataGenerator
         train_datagen = ImageDataGenerator(
-                    width_shift_range=self.config["DATASET"]["width_shift_range"],
-                    height_shift_range=self.config["DATASET"]["height_shift_range"],
-                    horizontal_flip=self.config["DATASET"]["horizontal_flip"])
+                        featurewise_center=True,
+                        featurewise_std_normalization=True,
+                        rescale=1./255,
+                        width_shift_range=self.config["DATASET"]["width_shift_range"],
+                        height_shift_range=self.config["DATASET"]["height_shift_range"],
+                        horizontal_flip=self.config["DATASET"]["horizontal_flip"])
+        
+        train_datagen.fit(x_train)
 
         train_gen = train_datagen.flow(x_train,
                                        y_train,
@@ -202,8 +208,8 @@ class Active_Learning_train:
         #############################################################################################
         # SET REGULARIZATION 
         #############################################################################################
-        with tf.name_scope("define_weight_decay"):
-            moving_ave = tf.train.ExponentialMovingAverage(self.config['TRAIN']["wdecay"]).apply(tf.trainable_variables())
+        #with tf.name_scope("define_weight_decay"):
+        #    moving_ave = tf.train.ExponentialMovingAverage(self.config['TRAIN']["wdecay"]).apply(tf.trainable_variables())
             
         
         #############################################################################################
@@ -215,6 +221,7 @@ class Active_Learning_train:
             var_name_mess = str(var_name).split('/')
             if var_name_mess[0] == 'Backbone':
                 self.backbone_trainable.append(var)
+                print(var)
                     
         self.lossnet_trainable = []
         for var in tf.trainable_variables():
@@ -222,22 +229,24 @@ class Active_Learning_train:
             var_name_mess = str(var_name).split('/')
             if var_name_mess[0] == 'LossNet':
                 self.lossnet_trainable.append(var)
+                print(var)
+                
         
         with tf.name_scope("define_train_whole"):
             op_w_backbone = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=self.backbone_trainable)
             op_w_lossnet  = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_w, var_list=self.lossnet_trainable )
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 with tf.control_dependencies([op_w_backbone, op_w_lossnet, global_step_update]):
-                    with tf.control_dependencies([moving_ave]):
-                        self.train_op_whole = tf.no_op()
+                    #with tf.control_dependencies([moving_ave]):
+                    self.train_op_whole = tf.no_op()
 
         with tf.name_scope("define_train_split"):
             op_s_backbone = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=self.backbone_trainable)
             op_s_lossnet  = tf.compat.v1.train.AdamOptimizer(self.learning_rate).minimize(self.t_loss_s, var_list=self.lossnet_trainable )
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 with tf.control_dependencies([op_s_backbone, op_s_lossnet, global_step_update]):
-                    with tf.control_dependencies([moving_ave]):
-                        self.train_op_split = tf.no_op()
+                    #with tf.control_dependencies([moving_ave]):
+                    self.train_op_split = tf.no_op()
                     
         
         #############################################################################################
@@ -316,17 +325,21 @@ class Active_Learning_train:
         self.sess = tf.Session(config=config_tf)
         self.sess.graph.as_default()
         self.sess.run(tf.global_variables_initializer())
+        
+        print( 'here')
 
         #############################################################################################
         # SETUP WATCHER
-        #############################################################################################        
+        #############################################################################################    
+        '''
         self.run_watcher = get_run_watcher()
+        
         self.run_watcher.add_run.remote(name=self.name_run,
                                         user=self.user,
                                         progress=self.progress,
                                         wandb_url=self.wandb.run.get_url(),
                                         status="Idle")
-
+        '''
 
     
     @ray.method(num_returns = 0)
