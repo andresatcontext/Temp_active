@@ -53,34 +53,54 @@ def Lossnet(inputs_lossnet, embedding_size):
 
     
     return [concat_w, concat_s, embedding_whole, embedding_split]
-    
-    
+
+"""
+(pid=3278, ip=192.168.8.54) c_pred (?, 10)
+(pid=3278, ip=192.168.8.54) l_pred (?,)
+(pid=3278, ip=192.168.8.54) l_true (?,)
+(pid=3278, ip=192.168.8.54) get_batch_size ()
+(pid=3278, ip=192.168.8.54) l_pred <unknown>
+(pid=3278, ip=192.168.8.54) l_pred <unknown>
+(pid=3278, ip=192.168.8.54) l_true (?,)
+(pid=3278, ip=192.168.8.54) one (?,)
+(pid=3278, ip=192.168.8.54) l_loss ()
+(pid=3278, ip=192.168.8.54) l_loss ()
+""" 
+
 def Loss_Lossnet(c_true, y_pred):
     
-    margin=1.0
+    margin = 1.0
     # classification predition
     c_pred = y_pred[:, :-1]
+    #print('c_pred',c_pred.shape)
     # loss prediction
     l_pred = y_pred[:, -1]
+    #print('l_pred',l_pred.shape)
     # get the true loss by computing the loss between c_pred and c_true
-    l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
-
+    l_true = tf.keras.losses.categorical_crossentropy(c_true, c_pred)
+    #l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
+    #print('l_true',l_true.shape)
     # compute the classification loss non reducted
     get_batch_size = tf.shape(l_pred)[0]
-
+    #print('get_batch_size',get_batch_size.shape)
     # 
-    l_pred = tf.squeeze(l_pred)
-    l_pred = (l_pred - l_pred[::-1])[:get_batch_size//2]
-
+    #l_pred = tf.squeeze(l_pred)
+    #print('l_pred',l_pred.shape)
+    l_pred2 = (l_pred - l_pred[::-1])[:get_batch_size//2]
+    #print('l_pred',l_pred.shape)
     #
-    l_true = (l_true - l_true[::-1] )[:get_batch_size//2]
-
+    l_true2 = (l_true - l_true[::-1] )[:get_batch_size//2]
+    #print('l_true',l_true.shape)
     # value used in the lossnet loss
-    one = (2 * tf.math.sign(  tf.clip_by_value( l_true, 0, 1))) - 1
+    one = (2 * tf.math.sign(  tf.clip_by_value( l_true2, 0, 1))) - 1
+    #print('one',one.shape)
+    
+    temp = margin - one * l_pred2
 
-    l_loss = tf.reduce_sum(tf.clip_by_value(margin - one * l_pred, 0,10000))
+    l_loss = tf.reduce_sum(tf.clip_by_value(temp, 0,10000))
+    #print('l_loss',l_loss.shape)
     l_loss = tf.math.divide(l_loss , tf.cast(tf.shape(l_pred)[0], l_loss.dtype)) # Note that the size of l_pred is already halved
-
+    #print('l_loss',l_loss.shape)
     return l_loss
 
 
@@ -90,32 +110,50 @@ def MAE_Lossnet(c_true, y_pred):
     # loss prediction
     l_pred = y_pred[:, -1]
     # get the true loss by computing the loss between c_pred and c_true
-    l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
+    l_true = tf.keras.losses.categorical_crossentropy(c_true, c_pred)
+    #l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
     # get 
     absolute_errors = tf.math.abs(l_true - l_pred)
     return tf.math.reduce_mean(absolute_errors)
 
 
 class Change_loss_weights(Callback):
-    def __init__(self, weight_w, weight_s, split_epoch):
+    def __init__(self, weight_w, weight_s, split_epoch, l_weight):
         self.weight_w = weight_w
         self.weight_s = weight_s
         self.split_epoch = split_epoch
-        self.when2print = True
+        self.l_weight = l_weight
     # customize your behavior
     def on_epoch_end(self, epoch, logs={}):
-        if epoch<self.split_epoch:
-            self.weight_w = 1
+        if epoch == self.split_epoch-1:
+            print("Change to split learning")
+            print('Previus weigths',self.weight_w,self.weight_s)
+                
+        if epoch<self.split_epoch-1:
+            self.weight_w = self.l_weight
             self.weight_s = 0
         else:
-            if self.when2print:
-                print('In',self.weight_w,self.weight_s)
-                
             self.weight_w = 0
-            self.weight_s = 1
+            self.weight_s = self.l_weight
             
-            if self.when2print:
-                print('Out',self.weight_w,self.weight_s)
-                
-            self.when2print=False
+        if epoch == self.split_epoch-1:
+            print('Updated weigths',self.weight_w,self.weight_s)
         
+def add_weight_decay(model, weight_decay):
+    if (weight_decay is None) or (weight_decay == 0.0):
+        return
+
+    # recursion inside the model
+    def add_decay_loss(m, factor):
+        if isinstance(m, Model):
+            for layer in m.layers:
+                add_decay_loss(layer, factor)
+        else:
+            for param in m.trainable_weights:
+                with backend.name_scope('weight_regularizer'):
+                    regularizer = lambda: tf.keras.regularizers.l2(factor)(param)
+                    m.add_loss(regularizer)
+
+    # weight decay and l2 regularization differs by a factor of 2
+    add_decay_loss(model, weight_decay/2.0)
+    return

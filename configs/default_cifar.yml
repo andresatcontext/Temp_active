@@ -35,9 +35,9 @@ TRAIN:
   - 35
   batch_size: 128
   gamma: 0.1
-  lr: 0.01
+  lr: 0.001
   start_epoch: 0
   transfer_weight_path: false
   w_c_loss: 1.0
-  w_l_loss: 0
-  wdecay: 0.995
+  w_l_loss: 1.0
+  wdecay: 0.998

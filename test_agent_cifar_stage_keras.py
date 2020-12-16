@@ -2,7 +2,7 @@ import ray
 
 @ray.remote(num_gpus=1)
 class Active_Learning_test_stage:
-    def __init__(self,  config , num_run):
+    def __init__(self,  config , num_run, test_set):
         
         
         #############################################################################################
@@ -30,16 +30,21 @@ class Active_Learning_test_stage:
         #############################################################################################
         self.config        = config
         self.source        = config["PROJECT"]["source"]
-        self.trainable     = False
         self.num_run       = num_run
-        
-
-        self.run_dir       = os.path.join(config["PROJECT"]["group_dir"],"Stage_"+str(num_run))
         self.group         = "Stage_"+str(num_run)
         self.name_run      = "Test_"+self.group 
         
-        self.run_dir       = os.path.join(config["PROJECT"]["group_dir"],self.group )
-        self.pre           ='\x1b[6;30;42m' + self.name_run + '\x1b[0m' #"____" #
+        self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group)
+        self.run_dir_check   = os.path.join(self.run_dir ,'checkpoints')
+        self.checkpoints_path= os.path.join(self.run_dir_check,'checkpoint.{epoch:03d}.hdf5')
+        #self.user            = get_user()
+        self.stop_flag       = False
+        
+        self.num_class       = len(self.config["NETWORK"]["CLASSES"])
+        self.input_shape     = [self.config["NETWORK"]["INPUT_SIZE"], self.config["NETWORK"]["INPUT_SIZE"], 3]
+        
+        self.pre ='\033[1;36m' + self.name_run + '\033[0;0m' #"____" #
+        self.problem ='\033[1;31m' + self.name_run + '\033[0;0m'
         
         self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
         self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
@@ -49,163 +54,116 @@ class Active_Learning_test_stage:
         except:
             pass
 
-            
-        path = os.path.join(self.run_dir,'checkpoint')
-        path_check_point_file = os.path.join(path,'checkpoint')
-        temp  = pd.read_csv(path_check_point_file,sep="\"",header=None,names=['1','paths','n'])
-        epochs_checked = [int(i.split('-')[-1]) for i in set(temp.paths.values)]
-        epochs_checked.sort()
-        self.epochs_checked = epochs_checked
-        
-        #############################################################################################
-        # SETUP WANDB
-        #############################################################################################
-        import wandb
-        self.wandb = wandb
-        
-        self.wandb.init( project  = self.config["PROJECT"]["project"], 
-                        group    = self.config["PROJECT"]["group"], 
-                        name     = "Test_"+str(num_run),
-                        job_type = self.group,
-                        config   = self.config   )
+        # list the epochs to evaluate
+        files_run_dir_check = os.listdir(self.run_dir_check)
+        self.epochs_checked = [int(i.split('.')[-2]) for i in files_run_dir_check if i.endswith('hdf5')]
+        self.epochs_checked.sort()
 
+        #######################################################################
+        # SETUP TENSORFLOW SESSION
+        #########################################################################
 
+        self.graph = tf.Graph()
+        with self.graph.as_default():
+            config_tf = tf.ConfigProto(allow_soft_placement=True) 
+            config_tf.gpu_options.allow_growth = True 
+            self.sess = tf.Session(config=config_tf,graph=self.graph)
+            with self.sess.as_default():
+        
+                ###################################################################
+                # SETUP WANDB
+                ####################################################################
+                import wandb
 
-        #############################################################################################
-        # LOAD DATA
-        #############################################################################################
-        if self.source=='CIFAR':
-            from data_utils import CIFAR10Data
-            # Load data
-            cifar10_data = CIFAR10Data()
-            _, _, x_test, y_test = cifar10_data.get_data(normalize_data=True)
-            
-            #x_test = x_test[test_set]
-            #y_test = y_test[test_set]
-        else:
-            pass
-        
-        #############################################################################################
-        # DATA GENERATOR
-        #############################################################################################
-        from tensorflow.keras.preprocessing.image import ImageDataGenerator
-        train_datagen = ImageDataGenerator()
-
-        train_gen = train_datagen.flow(x_test,
-                                       y_test,
-                                       batch_size= self.config["TEST"]["batch_size"],
-                                       shuffle=False)
-        
-        wh = self.config["NETWORK"]["INPUT_SIZE"]
-        self.num_class = len(self.config["NETWORK"]["CLASSES"])
-        
-        features_shape = [None, wh, wh, 3]
-        labels_shape = [None, self.num_class]
-        
-        tf_data = tf.data.Dataset.from_generator(lambda: train_gen, 
-                                                 output_types=(tf.float32, tf.float32),
-                                                output_shapes = (tf.TensorShape(features_shape), tf.TensorShape(labels_shape)))
-        data_tensors = tf_data.make_one_shot_iterator().get_next()
-        self.img_input = data_tensors[0]
-        self.c_true    = data_tensors[1]
-        
-        
-        #############################################################################################
-        # GENERATE MODEL
-        #############################################################################################
-        self.trainable = False
-        # Get the selected backbone
-        """
-        ResNet18
-        ResNet50
-        ResNet101
-        ResNet152
-        ResNet50V2
-        ResNet101V2
-        ResNet152V2
-        ResNeXt50
-        ResNeXt101
-        """
-        
-        # Get the selected backbone
-        #self.backbone = getattr(backbones,self.config["PROJECT"]["Backbone"])
-        self.backbone = getattr(backbones,"ResNet18")
-        img_input = tf.keras.Input(self.input_shape,name= 'input_image')
-        #label = tf.keras.Input([self.num_class],name= 'label')
-        
-        with tf.compat.v1.variable_scope("Backbone"):
-            #ResNet18(classes, input_shape, weight_decay=1e-4)
-
-            self.backbone_model = self.backbone(input_tensor=img_input, classes=self.num_class)
-            self.backbone_model.trainable = self.trainable
-            #self.backbone_model = self.backbone(input_tensor=self.img_input, classes=self.num_class,include_top=False,pooling='avg')
-        
-        with tf.compat.v1.variable_scope("LossNet"):
-            # GENERATE INPUT OF LOSSNET
-            loss_net_inputs = []
-            for feat in self.backbone_model.outputs[1:]:
-                loss_net_inputs.append(tf.keras.Input(feat.shape[1:]))
-                print()
-
-            self.lossnet_model = core.Lossnet_keras(loss_net_inputs, self.config["NETWORK"]["embedding_size"])
-            self.lossnet_model.trainable = self.trainable
-            
- 
-        # define Active_learner
-        c_pred_features = self.backbone_model(self.img_input)
-        # class predictions
-        self.c_pred = c_pred_features[0]
-        # features
-        features_w = c_pred_features[1:]
-        # split training 
-        features_s= []
-        for feat in features_w:
-            features_s.append(tf.stop_gradient(feat))
-            
-        self.l_pred_w, self.embedding_w = self.lossnet_model(features_w)
-        self.l_pred_s, self.embedding_s = self.lossnet_model(features_s)
-        
-        # Class loss
-        self.c_loss_nr = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.c_true, logits=self.c_pred)
-        self.c_loss    = tf.reduce_mean(self.c_loss_nr)
-        
-        #############################################################################################
-        # GLOBAL PROGRESS
-        #############################################################################################
-        self.evaluation_steps = int(np.ceil(len(x_test) / self.config['TRAIN']["batch_size"]))
-
-           
-        #############################################################################################
-        # METRICS
-        ############################################################################################# 
-        with tf.name_scope("define_metrics"):
-            
-            with tf.name_scope('Categorical_Accuracy'):
-                correct_prediction = tf.equal( tf.argmax(self.c_true, 1), tf.argmax(self.c_pred, 1))
-                self.Categorical_Accuracy = tf.cast(correct_prediction, tf.float32)
-                
-            with tf.name_scope('MAE_learning_loss_whole'):
-                self.MAE_whole = tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_w))
-
-            with tf.name_scope('MAE_learning_loss_split'):
-                self.MAE_split = tf.math.abs(tf.math.subtract(self.c_loss_nr, self.l_loss_s))
-                
-                
-        #############################################################################################
-        # SETUP TENSORFLOE SESSION
-        #############################################################################################
-        config_tf = tf.ConfigProto(allow_soft_placement=True) 
-        config_tf.gpu_options.allow_growth = True 
-        self.sess = tf.Session(config=config_tf)
-
-        #############################################################################################
-        # LOAD PREVIUS TRAINED MODEL
-        #############################################################################################
-        #TODO this should load a checkpoint of a training based in the training epoch or
-        # this could load any saved model for transfer learning
-        self.saver = tf.compat.v1.train.Saver(tf.global_variables())
-
+                self.wandb = wandb
+                self.wandb.init(project  = config["PROJECT"]["project"], 
+                                group    = config["PROJECT"]["group"], 
+                                name     = "Test_"+str(num_run),
+                                job_type = self.group ,
+                                sync_tensorboard = True,
+                                config = config)
+                ####################################################################
+                # LOAD DATA
+                #####################################################################
+                if self.config["PROJECT"]["source"]=='CIFAR':
+                    from data_utils import CIFAR10Data
+                    # Load data
+                    cifar10_data = CIFAR10Data()
+                    _, _, x_test, y_test = cifar10_data.get_data(normalize_data=False)
+                else:
+                    raise NameError('This is not implemented yet')
                     
+                ###########################################################################
+                # DATA GENERATOR
+                ###########################################################################
+                self.Data_Generator = core.Generator_cifar_test(x_test, y_test, config)
+
+
+                ##########################################################################
+                # DEFINE CLASSIFIER
+                ##########################################################################
+                # set input
+                img_input = tf.keras.Input(self.input_shape,name= 'input_image')
+
+                include_top = True
+
+                # Get the selected backbone
+                """
+                ResNet18
+                ResNet50
+                ResNet101
+                ResNet152
+                ResNet50V2
+                ResNet101V2
+                ResNet152V2
+                ResNeXt50
+                ResNeXt101
+                """
+                self.backbone = getattr(backbones,"ResNet18_cifar")
+                #
+                c_pred_features = self.backbone(input_tensor=img_input, classes= self.num_class, include_top=include_top)
+                self.c_pred_features= c_pred_features
+                if include_top: # include top classifier
+                    # class predictions
+                    c_pred = c_pred_features[0]
+                else:
+                    x = layers.GlobalAveragePooling2D(name='pool1')(c_pred_features[0])
+                    x = layers.Dense(self.num_class, name='fc1')(x)
+                    c_pred = layers.Activation('softmax', name='c_pred')(x)
+                    c_pred_features[0]=c_pred
+
+                self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
+
+                ###################################################################
+                # DEFINE FULL MODEL
+                ####################################################################
+                c_pred_features_1 = self.classifier(img_input)
+                c_pred_1 = c_pred_features_1[0]
+
+                # define lossnet
+                loss_pred_embeddings = core.Lossnet(c_pred_features_1, self.config["NETWORK"]["embedding_size"])
+
+                self.model = models.Model(inputs=img_input, outputs=[c_pred_1]+loss_pred_embeddings)
+                
+        
+                ##################################################################
+                # DEFINE CALLBACKS
+                ##################################################################
+                # Checkpoint saver
+                self.callbacks = []
+
+                # Callback to wandb
+                self.callbacks.append(self.wandb.keras.WandbCallback())
+                
+                ################################################################
+                # INIT VARIABLES
+                ################################################################
+                #self.sess.graph.as_default()
+                backend.set_session(self.sess)
+                self.sess.run(tf.local_variables_initializer())
+                
+                print(self.pre,'Init done')
+                
 
     @ray.method(num_returns = 1)
     def get_wandb_id(self):
@@ -222,111 +180,109 @@ class Active_Learning_test_stage:
         from sklearn import metrics
         import pandas as pd
 
+        with self.graph.as_default():
+            with self.sess.as_default():
+                for epoch in self.epochs_checked:
+                    
+                    weight_file  = os.path.join(self.run_dir, 'checkpoints',  f'checkpoint.{epoch:03d}.hdf5')
 
-        for epoch in self.epochs_checked:
-        #
+                    if not os.path.isfile(self.evaluation_file ) or epoch==0:
+                        df = pd.DataFrame(columns=['epoch','accuracy'])
+                        df.to_csv(self.evaluation_file )
+                    else:
+                        df = pd.read_csv(self.evaluation_file ,index_col=0)
 
-            weight_file  = os.path.join(self.run_dir, 'checkpoint',  "epoch"+str(epoch)+".ckpt-"+str(epoch))
+                    print(self.pre, 'Restoring from '+str(weight_file))
+                    self.model.load_weights(weight_file)
 
-            if not os.path.isfile(self.evaluation_file ) or epoch==0:
-                df = pd.DataFrame(columns=['epoch','accuracy'])
-                df.to_csv(self.evaluation_file )
-            else:
-                df = pd.read_csv(self.evaluation_file ,index_col=0)
-
-
-            print(self.pre, 'Restoring from '+str(weight_file))
-            self.saver.restore(self.sess, weight_file)
-
-            #############################################################################################
-            # INFER THE TEST SET
-            #############################################################################################
-            list_np = []
-            for step in range(self.evaluation_steps):
-
-                result_step= self.sess.run([self.c_pred,
-                                            self.c_true,
-                                            self.c_loss_nr,
-                                            self.l_pred_w])
-
-                if step==0:
-                    for res in result_step:
-                        list_np.append(res)
-
-                else:
-                    for i in range(len(result_step)):
-                        list_np[i] = np.concatenate([list_np[i], result_step[i]])
-
-            #############################################################################################
-            # GET VALUES
-            #############################################################################################
-
-            pred_array = np.argmax(list_np[0],axis=1)
-            annot_array = np.argmax(list_np[1],axis=1)
-            scores_array = np.max(list_np[0],axis=1)
-            correctness_array = (pred_array==annot_array).astype(np.int64)
-
-            true_loss = list_np[2]
-            pred_loss    = list_np[3]
-
-            print(self.pre,"Length of the test: ", len(pred_array))
-
-            #############################################################################################
-            # COMPUTE METRICS
-            #############################################################################################
-
-            ######## Classification
-
-            # Compute the F1 score, also known as balanced F-score or F-measure
-            f1 = metrics.f1_score(annot_array, pred_array, average='macro')
-            self.wandb.log({'F1 score': f1}, step=epoch)
-
-            # Accuracy classification score
-            accuracy = metrics.accuracy_score(annot_array, pred_array)
-            self.wandb.log({'Test: Classification Accuracy': accuracy}, step=epoch)
-
-            # Compute Receiver operating characteristic (ROC)
-            false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
-            fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
-            self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=epoch)
-
-            #  Area Under the Curve (AUC) 
-            res_auc = metrics.auc(false_positives_axe, true_positives_axe)
-            self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=epoch)  
-
-            # Compute confusion matrix to evaluate the accuracy of a classification.
-            if len(self.config["NETWORK"]["CLASSES"])<200:
-                cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
-                fig_cm = self.Plot_confusion_matrix(cm)
-                self.wandb.log({'Confusion Matrix' : fig_cm}, step=epoch)
-
-            ######## Regression (loss estimation)
-
-            mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
-            self.wandb.log({'Mean absolute error': mae_v1}, step=epoch)
-
-            evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
-            self.wandb.log({'Explained variance': evs_v1}, step=epoch)
-
-            mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
-            self.wandb.log({'Mean squared error': mse_v1}, step=epoch)
+                    #############################################################################################
+                    # INFER THE TEST SET
+                    #############################################################################################
+                    
+                    for i, (X,Y) in enumerate(self.Data_Generator):
+                        preds  = self.model.predict(X)
+                        if i==0:
+                            labels   = Y[0]
+                            c_pred   = preds[0]
+                            l_pred_w = preds[1][:,-1]
+                            l_pred_s = preds[2][:,-1]
+                        else :
+                            labels   = np.concatenate([labels,Y[0]])  
+                            c_pred   = np.concatenate([c_pred,preds[0]])
+                            l_pred_w = np.concatenate([l_pred_w,preds[1][:,-1]])
+                            l_pred_s = np.concatenate([l_pred_s,preds[2][:,-1]])
 
 
-            #############################################################################################
-            # Save accuracy and epoch to select best model
-            #############################################################################################
-            temp_df= pd.DataFrame({'epoch':[epoch],'accuracy':[accuracy]})
+                    #############################################################################################
+                    # GET VALUES
+                    #############################################################################################
+                    
+                    pred_array = np.argmax(c_pred,axis=1)
+                    annot_array = np.argmax(labels,axis=1)
+                    scores_array = np.max(c_pred,axis=1)
+                    correctness_array = (pred_array==annot_array).astype(np.int64)
 
-            df = pd.concat([df,temp_df],ignore_index=True)
+                    #true_loss = list_np[2]
+                    #pred_loss = list_np[3]
 
-            to_print = 'Test || '
-            to_print += "Epoch: %2d || "%(epoch)
-            to_print += "Accuracy: %.2f || "%(100*accuracy)
+                    print(self.pre,"Length of the test: ", len(pred_array))
 
-            print(self.pre, to_print)
-        # for
+                    #############################################################################################
+                    # COMPUTE METRICS
+                    #############################################################################################
 
-        df.to_csv(self.evaluation_file)
+                    ######## Classification
+
+                    # Compute the F1 score, also known as balanced F-score or F-measure
+                    f1 = metrics.f1_score(annot_array, pred_array, average='macro')
+                    self.wandb.log({'F1 score': f1}, step=epoch)
+
+                    # Accuracy classification score
+                    accuracy = metrics.accuracy_score(annot_array, pred_array)
+                    self.wandb.log({'Test: Classification Accuracy': accuracy}, step=epoch)
+
+                    # Compute Receiver operating characteristic (ROC)
+                    false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
+                    fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
+                    self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=epoch)
+
+                    #  Area Under the Curve (AUC) 
+                    res_auc = metrics.auc(false_positives_axe, true_positives_axe)
+                    self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=epoch)  
+
+                    # Compute confusion matrix to evaluate the accuracy of a classification.
+                    if len(self.config["NETWORK"]["CLASSES"])<200:
+                        cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
+                        fig_cm = self.Plot_confusion_matrix(cm)
+                        self.wandb.log({'Confusion Matrix' : fig_cm}, step=epoch)
+
+                    ######## Regression (loss estimation)
+                    """
+                    mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
+                    self.wandb.log({'Mean absolute error': mae_v1}, step=epoch)
+
+                    evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
+                    self.wandb.log({'Explained variance': evs_v1}, step=epoch)
+
+                    mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
+                    self.wandb.log({'Mean squared error': mse_v1}, step=epoch)
+                    """
+
+                    #############################################################################################
+                    # Save accuracy and epoch to select best model
+                    #############################################################################################
+                    temp_df= pd.DataFrame({'epoch':[epoch],'accuracy':[accuracy]})
+
+                    df = pd.concat([df,temp_df],ignore_index=True)
+
+                    to_print = 'Test || '
+                    to_print += "Epoch: %2d || "%(epoch)
+                    to_print += "Accuracy: %.2f || "%(100*accuracy)
+
+                    print(self.pre, to_print)
+                # for
+
+                df.to_csv(self.evaluation_file)
 
                   
     def Plot_confusion_matrix(self,cm):

@@ -40,7 +40,6 @@ class Active_Learning_train:
         self.run_dir_check   = os.path.join(self.run_dir ,'checkpoints')
         self.checkpoints_path= os.path.join(self.run_dir_check,'checkpoint.{epoch:03d}.hdf5')
         self.user            = get_user()
-        self.test_run_id     = None
         self.stop_flag       = False
         self.training_thread = None
         self.resume_training = resume
@@ -119,16 +118,20 @@ class Active_Learning_train:
                 else:
                     raise NameError('This is not implemented yet')
 
-
                 #############################################################################################
                 # DATA GENERATOR
                 #############################################################################################
                 self.Data_Generator = core.Generator_cifar_train(x_train, y_train, config)
 
                 #############################################################################################
-                # GENERATE MODEL
+                # DEFINE CLASSIFIER
                 #############################################################################################
+                # set input
+                img_input = tf.keras.Input(self.input_shape,name= 'input_image')
 
+                include_top = True
+
+                # Get the selected backbone
                 """
                 ResNet18
                 ResNet50
@@ -140,15 +143,6 @@ class Active_Learning_train:
                 ResNeXt50
                 ResNeXt101
                 """
-                #############################################################################################
-                # DEFINE CLASSIFIER
-                #############################################################################################
-                # set input
-                img_input = tf.keras.Input(self.input_shape,name= 'input_image')
-
-                include_top = True
-
-                # Get the selected backbone
                 self.backbone = getattr(backbones,"ResNet18_cifar")
                 #
                 c_pred_features = self.backbone(input_tensor=img_input, classes= self.num_class, include_top=include_top)
@@ -160,7 +154,7 @@ class Active_Learning_train:
                     x = layers.GlobalAveragePooling2D(name='pool1')(c_pred_features[0])
                     x = layers.Dense(self.num_class, name='fc1')(x)
                     c_pred = layers.Activation('softmax', name='c_pred')(x)
-                    c_pred_features[0]=c_pred
+                    c_pred_features[0] = c_pred
 
                 self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
 
@@ -174,7 +168,9 @@ class Active_Learning_train:
                 loss_pred_embeddings = core.Lossnet(c_pred_features_1, self.config["NETWORK"]["embedding_size"])
 
                 self.model = models.Model(inputs=img_input, outputs=[c_pred_1]+loss_pred_embeddings) #, embedding_s] )
-
+                
+                #core.add_weight_decay(self.model,self.config['TRAIN']['wdecay'])
+                
                 #############################################################################################
                 # DEFINE LOSSES
                 #############################################################################################
@@ -184,11 +180,11 @@ class Active_Learning_train:
                 self.loss_dict['l_pred_w']   = core.Loss_Lossnet
                 self.loss_dict['l_pred_s']   = core.Loss_Lossnet
                 # weights
-                self.weight_w = backend.variable(1)
+                self.weight_w = backend.variable(self.config['TRAIN']['w_c_loss'])
                 self.weight_s = backend.variable(0)
 
                 self.loss_w_dict = {}
-                self.loss_w_dict['Classifier'] = 1
+                self.loss_w_dict['Classifier'] = self.config['TRAIN']['w_c_loss']
                 self.loss_w_dict['l_pred_w']   = self.weight_w
                 self.loss_w_dict['l_pred_s']   = self.weight_s
                 self.loss_w_dict['Embedding']  = 0
@@ -205,7 +201,7 @@ class Active_Learning_train:
                 #############################################################################################
                 # DEFINE OPTIMIZER
                 #############################################################################################
-                self.opt = optimizers.Adam(lr=0.01)
+                self.opt = optimizers.Adam(lr=self.config['TRAIN']['lr'])
 
                 #############################################################################################
                 # DEFINE CALLBACKS
@@ -234,7 +230,7 @@ class Active_Learning_train:
                 self.callbacks.append(tf.keras.callbacks.LearningRateScheduler(scheduler))
 
                 # callbeck to change the weigths for the split training:
-                self.callbacks.append(core.Change_loss_weights(self.weight_w, self.weight_s, self.split_epoch))
+                self.callbacks.append(core.Change_loss_weights(self.weight_w, self.weight_s, self.split_epoch, self.config['TRAIN']['w_c_loss']))
 
                 #############################################################################################
                 # LOAD PREVIUS WEIGTHS
@@ -311,22 +307,24 @@ class Active_Learning_train:
                         ###############################################################################
                         if self.current_epoch > self.total_epochs:
                             print(self.problem, 'The starting epoch is higher that the total epochs')
+                            
+                        #current_epoch = int(self.current_epoch)
 
-                        for epoch in range(self.current_epoch, self.total_epochs+1):
+                        #for epoch in range(current_epoch, self.total_epochs+1):
 
-                            if self.stop_flag:
-                                self.run_watcher.update_run.remote(name=self.name_run, status="Idle")
-                                break
+                          #  if self.stop_flag:
+                             #   self.run_watcher.update_run.remote(name=self.name_run, status="Idle")
+                              #  break
 
-                            history = self.model.fit_generator(self.Data_Generator,
-                                                               epochs=epoch+1, 
-                                                               callbacks = self.callbacks,
-                                                               initial_epoch=epoch,
-                                                               verbose=2)
+                        history = self.model.fit_generator(self.Data_Generator,
+                                                           epochs=self.total_epochs, 
+                                                           callbacks = self.callbacks,
+                                                           initial_epoch=self.current_epoch,
+                                                           verbose=0)
 
-                            self.current_epoch = epoch
-                            self.progress = round(self.current_epoch / self.total_epochs * 100.0, 2)
-                            self.run_watcher.update_run.remote(name=self.name_run, progress=self.progress)
+                           # self.current_epoch = epoch
+                            #self.progress = round(self.current_epoch / self.total_epochs * 100.0, 2)
+                        self.run_watcher.update_run.remote(name=self.name_run, progress=self.progress)
 
                 self.run_watcher.update_run.remote(name=self.name_run, status="Finished", progress=self.progress)
                 

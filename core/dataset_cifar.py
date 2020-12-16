@@ -34,11 +34,15 @@ class Generator_cifar_test(Sequence):
     """Wrapper generator"""
 
     def __init__(self, x_test, y_test, config):
+        
+        self.x_test = x_test
+        self.y_test = y_test
+        
         # Keras generator
         self.generator = ImageDataGenerator()
         
         # Real time multiple input data augmentation
-        self.genX1 = self.generator.flow(x_test, y_test, batch_size=config["TRAIN"]["batch_size"])
+        self.genX1 = self.generator.flow(x_test, y_test, batch_size=config["TEST"]["batch_size"], shuffle=True)
 
     def __len__(self):
         """It is mandatory to implement it on Keras Sequence"""
@@ -50,3 +54,25 @@ class Generator_cifar_test(Sequence):
         #X_batch = [X_batch]
         Y_batch = [Y_batch,Y_batch,Y_batch]
         return X_batch, Y_batch
+    
+    
+class Generator_cifar_inference(Sequence):
+    """Wrapper generator"""
+
+    def __init__(self, x_infer, index_x, config):
+        
+        # Keras generator
+        self.generator = ImageDataGenerator()
+        
+        # Real time multiple input data augmentation
+        self.genX1 = self.generator.flow(x_infer,index_x, batch_size=config["TEST"]["batch_size"], shuffle=True)
+
+    def __len__(self):
+        """It is mandatory to implement it on Keras Sequence"""
+        return self.genX1.__len__()
+
+    def __getitem__(self, index):
+        """Getting items from the 2 generators and packing them"""
+        X_batch, index_x = self.genX1.__getitem__(index)
+
+        return X_batch, index_x
