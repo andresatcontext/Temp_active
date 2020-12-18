@@ -1,39 +1,36 @@
 from AutoML import DataNet, AutoMLDataset, local_module, local_file, AutoML, get_run_watcher, get_user
 import ray
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=1, resources={"gpu_lvl_2" : 1})
 class Active_Learning_train:
     def __init__(self,   config, 
-                         labeled_set,
-                         test_set, 
-                         num_run,
-                         resume_model_path,
+                         dataset,
+                         num_run=0,
+                         resume_model_path=False,
                          resume = False):
 
         
-        ################################################################
+        #############################################################################################
         # LIBRARIES
-        ################################################################    
+        #############################################################################################        
         import os
-        self.run_path = os.path.dirname(os.path.realpath(__file__))
-        os.chdir(self.run_path)
-        
-        import tensorflow as tf
-        
-        core = local_module("core")
-
-        backbones = local_module("backbones")
-        
-        from tensorflow.python import pywrap_tensorflow
         import numpy as np
+        import tensorflow as tf
+        from tensorflow.python import pywrap_tensorflow
         from tensorflow.keras import optimizers, losses, models, backend, layers, metrics
         
-        ################################################################
+        self.run_path = os.path.dirname(os.path.realpath(__file__))
+        os.chdir(self.run_path)
+        core = local_module("core")
+        backbones = local_module("backbones")
+        
+        #############################################################################################
         # PARAMETERS RUN
-        ################################################################
+        #############################################################################################
         self.config          = config
+        self.dataset         = dataset
         self.num_run         = num_run
-        self.group           = "Stage_"+str(num_run)
+        self.group           = "All"
         self.name_run        = "Train_"+self.group 
         
         self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group)
@@ -44,11 +41,10 @@ class Active_Learning_train:
         self.training_thread = None
         self.resume_training = resume
         
-        self.num_data_train  = len(labeled_set) 
+        #self.num_data_train  = len(labeled_set) 
         self.resume_model_path = resume_model_path
         self.transfer_weight_path = self.config['TRAIN']["transfer_weight_path"]
-        self.num_class       = len(self.config["NETWORK"]["CLASSES"])
-        self.input_shape     = [self.config["NETWORK"]["INPUT_SIZE"], self.config["NETWORK"]["INPUT_SIZE"], 3]
+        self.input_shape       = [self.config["NETWORK"]["INPUT_SIZE"], self.config["NETWORK"]["INPUT_SIZE"], 3]
         
         
         self.pre ='\033[1;36m' + self.name_run + '\033[0;0m' #"____" #
@@ -57,30 +53,27 @@ class Active_Learning_train:
         # Creating the train folde
         import shutil
         
+        # create base dir and gr
+        if os.path.exists(config["PROJECT"]["project_dir"]) is False:
+            os.mkdir(config["PROJECT"]["project_dir"])
+        
         if os.path.exists(self.run_dir) and self.resume_model_path is False:
-            if num_run==0:
-                shutil.rmtree(config["PROJECT"]["group_dir"])
-                os.mkdir(config["PROJECT"]["group_dir"])
-            else:  
-                shutil.rmtree(self.run_dir)
-                
+            shutil.rmtree(config["PROJECT"]["group_dir"])
+            os.mkdir(config["PROJECT"]["group_dir"])
+            
+        if os.path.exists(config["PROJECT"]["group_dir"]) is False:
+            os.mkdir(config["PROJECT"]["group_dir"])
+
         if os.path.exists(self.run_dir) is False:
             os.mkdir(self.run_dir)
             
         if os.path.exists(self.run_dir_check) is False:
             os.mkdir(self.run_dir_check)
             
-        ################################################################
-        # GLOBAL PROGRESS
-        ################################################################
-        self.current_epoch = 0
-        self.split_epoch   = self.config['TRAIN']["EPOCH_WHOLE"] 
-        self.total_epochs  = self.config['TRAIN']["EPOCH_WHOLE"] + self.config['TRAIN']["EPOCH_SLIT"]
-        self.progress = round(self.current_epoch / self.total_epochs * 100.0, 2)
         
-        ################################################################
+        #############################################################################################
         # SETUP TENSORFLOW SESSION
-        ################################################################
+        #############################################################################################
 
         self.graph = tf.Graph()
         with self.graph.as_default():
@@ -89,9 +82,9 @@ class Active_Learning_train:
             self.sess = tf.Session(config=config_tf,graph=self.graph)
             with self.sess.as_default():
 
-                ################################################################
+                #############################################################################################
                 # SETUP WANDB
-                ################################################################
+                #############################################################################################
                 import wandb
 
                 self.wandb = wandb
@@ -102,33 +95,33 @@ class Active_Learning_train:
                                 sync_tensorboard = True,
                                 config = config)
 
-                ################################################################
+                #############################################################################################
                 # LOAD DATA
-                ################################################################
-                if self.config["PROJECT"]["source"]=='CIFAR':
-                    from data_utils import CIFAR10Data
-                    # Load data
-                    cifar10_data = CIFAR10Data()
-                    x_train, y_train, _, _ = cifar10_data.get_data(normalize_data=False)
-
-                    x_train = x_train[labeled_set]
-                    y_train = y_train[labeled_set]
-
-                    self.test_set = test_set
-                else:
-                    raise NameError('This is not implemented yet')
-
-                ################################################################
-                # DATA GENERATOR
-                ################################################################
-                self.Data_Generator = core.Generator_cifar_train(x_train, y_train, config)
-
-                ################################################################
+                #############################################################################################
+                self.DataGen = core.ClassificationDataset(  config["TRAIN"]["batch_size"],
+                                                             self.dataset,
+                                                             data_augmentation=config["DATASET"]["Data_augementation"],
+                                                             subset="train")  
+                
+                self.num_class = len(self.DataGen.list_classes)
+                
+                #############################################################################################
+                # GLOBAL PROGRESS
+                #############################################################################################
+                self.steps_per_epoch  = int(np.floor(self.DataGen.nb_elements/config["TRAIN"]["batch_size"]))
+                self.current_epoch = 0
+                self.split_epoch   = self.config['TRAIN']["EPOCH_WHOLE"] 
+                self.total_epochs  = self.config['TRAIN']["EPOCH_WHOLE"] + self.config['TRAIN']["EPOCH_SLIT"]
+                self.progress = round(self.current_epoch / self.total_epochs * 100.0, 2)
+                
+                
+                #############################################################################################
                 # DEFINE CLASSIFIER
-                ################################################################
+                #############################################################################################
                 # set input
-                img_input = tf.keras.Input(self.input_shape,name= 'input_image')
-
+                img_input = tf.keras.Input(tensor=self.DataGen.images_tensor,name= 'input_image')
+                #img_input = tf.keras.Input(self.input_shape,name= 'input_image')
+                
                 include_top = True
 
                 # Get the selected backbone
@@ -143,10 +136,11 @@ class Active_Learning_train:
                 ResNeXt50
                 ResNeXt101
                 """
-                self.backbone = getattr(backbones,"ResNet18_cifar")
+                print(self.pre, "The backbone is: ",self.config["NETWORK"]["Backbone"])
+                self.backbone = getattr(backbones,self.config["NETWORK"]["Backbone"])
                 #
                 c_pred_features = self.backbone(input_tensor=img_input, classes= self.num_class, include_top=include_top)
-                self.c_pred_features= c_pred_features
+                self.c_pred_features=  c_pred_features
                 if include_top: # include top classifier
                     # class predictions
                     c_pred = c_pred_features[0]
@@ -158,60 +152,60 @@ class Active_Learning_train:
 
                 self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
 
-                ################################################################
+                #############################################################################################
                 # DEFINE FULL MODEL
-                ################################################################
+                #############################################################################################
                 c_pred_features_1 = self.classifier(img_input)
                 c_pred_1 = c_pred_features_1[0]
-
-                # define lossnet
                 loss_pred_embeddings = core.Lossnet(c_pred_features_1, self.config["NETWORK"]["embedding_size"])
-
                 self.model = models.Model(inputs=img_input, outputs=[c_pred_1]+loss_pred_embeddings) #, embedding_s] )
                 
+                #############################################################################################
+                # DEFINE WEIGHT DECAY
+                #############################################################################################
                 #core.add_weight_decay(self.model,self.config['TRAIN']['wdecay'])
                 
-                ################################################################
+                #############################################################################################
                 # DEFINE LOSSES
-                ################################################################
+                #############################################################################################
                 # losses
                 self.loss_dict = {}
-                self.loss_dict['Classifier'] = losses.categorical_crossentropy
+                self.loss_dict['Classifier'] = losses.sparse_categorical_crossentropy
                 self.loss_dict['l_pred_w']   = core.Loss_Lossnet
                 self.loss_dict['l_pred_s']   = core.Loss_Lossnet
                 # weights
-                self.weight_w = backend.variable(self.config['TRAIN']['w_c_loss'])
+                self.weight_w = backend.variable(self.config['TRAIN']['weight_lossnet_loss'])
                 self.weight_s = backend.variable(0)
 
                 self.loss_w_dict = {}
-                self.loss_w_dict['Classifier'] = self.config['TRAIN']['w_c_loss']
+                self.loss_w_dict['Classifier'] = 1
                 self.loss_w_dict['l_pred_w']   = self.weight_w
                 self.loss_w_dict['l_pred_s']   = self.weight_s
                 self.loss_w_dict['Embedding']  = 0
 
-                ################################################################
+                #############################################################################################
                 # DEFINE METRICS
-                ################################################################
+                #############################################################################################
                 # metrics
                 self.metrics_dict = {}
-                self.metrics_dict['Classifier'] = metrics.categorical_accuracy
+                self.metrics_dict['Classifier'] = metrics.sparse_categorical_accuracy
                 self.metrics_dict['l_pred_w']   = core.MAE_Lossnet
                 self.metrics_dict['l_pred_s']   = core.MAE_Lossnet
 
-                ################################################################
+                #############################################################################################
                 # DEFINE OPTIMIZER
-                ################################################################
+                #############################################################################################
                 self.opt = optimizers.Adam(lr=self.config['TRAIN']['lr'])
 
-                ################################################################
+                #############################################################################################
                 # DEFINE CALLBACKS
-                ################################################################
+                #############################################################################################
                 # Checkpoint saver
                 self.callbacks = []
                 model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                                                         filepath=self.checkpoints_path,
                                                         save_weights_only=True,
-                                                        period=self.config["RUNS"]["test_each"])
+                                                        period=self.config["TRAIN"]["test_each"])
 
 
                 self.callbacks.append(model_checkpoint_callback)
@@ -230,11 +224,11 @@ class Active_Learning_train:
                 self.callbacks.append(tf.keras.callbacks.LearningRateScheduler(scheduler))
 
                 # callbeck to change the weigths for the split training:
-                self.callbacks.append(core.Change_loss_weights(self.weight_w, self.weight_s, self.split_epoch, self.config['TRAIN']['w_c_loss']))
+                self.callbacks.append(core.Change_loss_weights(self.weight_w, self.weight_s, self.split_epoch, self.config['TRAIN']['weight_lossnet_loss']))
 
-                ################################################################
+                #############################################################################################
                 # LOAD PREVIUS WEIGTHS
-                ################################################################
+                #############################################################################################
                 if self.resume_model_path:
                     # check the epoch where is loaded
                     try:
@@ -256,17 +250,18 @@ class Active_Learning_train:
                     else:
                         print(self.pre, "Resuming the training from stage: ",self.num_run," at epoch ", self.current_epoch)
 
-                ################################################################
+                #############################################################################################
                 # COMPILE MODEL
-                ################################################################        
+                #############################################################################################        
                 self.model.compile(loss = self.loss_dict, 
                                    loss_weights = self.loss_w_dict, 
                                    metrics = self.metrics_dict, 
-                                  optimizer = self.opt)
+                                   optimizer = self.opt,
+                                   target_tensors=self.DataGen.labels_tensor)
 
-                ################################################################
+                #############################################################################################
                 # INIT VARIABLES
-                ################################################################
+                #############################################################################################
                 #self.sess.graph.as_default()
                 backend.set_session(self.sess)
                 self.sess.run(tf.local_variables_initializer())
@@ -284,8 +279,6 @@ class Active_Learning_train:
                                                 status="Idle")
                 print(self.pre,'Init done')
 
-
-    
     @ray.method(num_returns = 0)
     def start_training(self):
         import threading
@@ -302,9 +295,9 @@ class Active_Learning_train:
                         print( self.pre ,"Start training")
                         self.run_watcher.update_run.remote(name=self.name_run, status="Training")
 
-                        ################################################################
+                        ###############################################################################
                         # TRAIN THE WHOLE NETWORK
-                        ################################################################
+                        ###############################################################################
                         if self.current_epoch > self.total_epochs:
                             print(self.problem, 'The starting epoch is higher that the total epochs')
                             
@@ -316,11 +309,11 @@ class Active_Learning_train:
                              #   self.run_watcher.update_run.remote(name=self.name_run, status="Idle")
                               #  break
 
-                        history = self.model.fit_generator(self.Data_Generator,
-                                                           epochs=self.total_epochs, 
-                                                           callbacks = self.callbacks,
-                                                           initial_epoch=self.current_epoch,
-                                                           verbose=0)
+                        history = self.model.fit(  steps_per_epoch = self.steps_per_epoch,
+                                                   epochs = self.total_epochs, 
+                                                   callbacks = self.callbacks,
+                                                   initial_epoch = self.current_epoch,
+                                                   verbose=2)
 
                            # self.current_epoch = epoch
                             #self.progress = round(self.current_epoch / self.total_epochs * 100.0, 2)
@@ -347,4 +340,4 @@ class Active_Learning_train:
 
     @ray.method(num_returns = 1)
     def get_progress(self):
-        return {"global_step" : self.current_epoch, "progress": self.progress, }
+        return {"global_step" : self.current_epoch, "progress": self.progress}

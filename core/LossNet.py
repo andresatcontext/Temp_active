@@ -54,19 +54,6 @@ def Lossnet(inputs_lossnet, embedding_size):
     
     return [concat_w, concat_s, embedding_whole, embedding_split]
 
-"""
-(pid=3278, ip=192.168.8.54) c_pred (?, 10)
-(pid=3278, ip=192.168.8.54) l_pred (?,)
-(pid=3278, ip=192.168.8.54) l_true (?,)
-(pid=3278, ip=192.168.8.54) get_batch_size ()
-(pid=3278, ip=192.168.8.54) l_pred <unknown>
-(pid=3278, ip=192.168.8.54) l_pred <unknown>
-(pid=3278, ip=192.168.8.54) l_true (?,)
-(pid=3278, ip=192.168.8.54) one (?,)
-(pid=3278, ip=192.168.8.54) l_loss ()
-(pid=3278, ip=192.168.8.54) l_loss ()
-""" 
-
 def Loss_Lossnet(c_true, y_pred):
     
     margin = 1.0
@@ -77,7 +64,7 @@ def Loss_Lossnet(c_true, y_pred):
     l_pred = y_pred[:, -1]
     #print('l_pred',l_pred.shape)
     # get the true loss by computing the loss between c_pred and c_true
-    l_true = tf.keras.losses.categorical_crossentropy(c_true, c_pred)
+    l_true = tf.keras.losses.sparse_categorical_crossentropy(c_true, c_pred)
     #l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
     #print('l_true',l_true.shape)
     # compute the classification loss non reducted
@@ -110,7 +97,7 @@ def MAE_Lossnet(c_true, y_pred):
     # loss prediction
     l_pred = y_pred[:, -1]
     # get the true loss by computing the loss between c_pred and c_true
-    l_true = tf.keras.losses.categorical_crossentropy(c_true, c_pred)
+    l_true = tf.keras.losses.sparse_categorical_crossentropy(c_true, c_pred)
     #l_true = tf.nn.softmax_cross_entropy_with_logits_v2(labels=c_true, logits=c_pred)
     # get 
     absolute_errors = tf.math.abs(l_true - l_pred)
@@ -118,23 +105,24 @@ def MAE_Lossnet(c_true, y_pred):
 
 
 class Change_loss_weights(Callback):
-    def __init__(self, weight_w, weight_s, split_epoch, l_weight):
+    def __init__(self, weight_w, weight_s, split_epoch, weight_lossnet_loss):
         self.weight_w = weight_w
         self.weight_s = weight_s
         self.split_epoch = split_epoch
-        self.l_weight = l_weight
+        self.weight_lossnet_loss = weight_lossnet_loss
     # customize your behavior
     def on_epoch_end(self, epoch, logs={}):
+        print(logs)
         if epoch == self.split_epoch-1:
             print("Change to split learning")
             print('Previus weigths',self.weight_w,self.weight_s)
                 
         if epoch<self.split_epoch-1:
-            self.weight_w = self.l_weight
+            self.weight_w = self.weight_lossnet_loss
             self.weight_s = 0
         else:
             self.weight_w = 0
-            self.weight_s = self.l_weight
+            self.weight_s = self.weight_lossnet_loss
             
         if epoch == self.split_epoch-1:
             print('Updated weigths',self.weight_w,self.weight_s)

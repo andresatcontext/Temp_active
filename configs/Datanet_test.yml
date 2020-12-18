@@ -1,0 +1,27 @@
+DATASET:
+  Data_augementation: true
+NETWORK:
+  Backbone: ResNet50V2
+  INPUT_SIZE: 256
+  MARGIN: 1.0
+  embedding_size: 128
+PROJECT:
+  dataset_name: person_classification
+  group: Classification_v0
+  group_dir: /mnt/Ressources/Andres/runs/Classification_v0
+  project: Active_Learning_Datanet
+  project_dir: /mnt/Ressources/Andres/runs
+TEST:
+  batch_size: 44
+TRAIN:
+  EPOCH_SLIT: 40
+  EPOCH_WARMUP: 2
+  EPOCH_WHOLE: 40
+  MILESTONES:
+  - 25
+  - 35
+  batch_size: 32
+  lr: 0.01
+  test_each: 1
+  transfer_weight_path: false
+  weight_lossnet_loss: 1.0

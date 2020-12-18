@@ -4,18 +4,8 @@ from .LossNet import MAE_Lossnet
 from .LossNet import Change_loss_weights
 from .LossNet import add_weight_decay
 
+from .Classification_dataset_tf import ClassificationDataset
+
 from .dataset_cifar import Generator_cifar_train
 from .dataset_cifar import Generator_cifar_test
 from .dataset_cifar import Generator_cifar_inference
-"""
-from .Classifier_AL import Loss_Lossnet
-
-from .Classifier_AL import Lossnet_keras
-from .Classifier_AL import Loss_fn
-
-from .LossNet import LossNet_layer
-from .LossNet import LossNet_layer_loss
-from .LossNet import loss_nr_layer
-from .LossNet import Learning_loss_loss
-from .LossNet import Learning_loss_concat
-"""
