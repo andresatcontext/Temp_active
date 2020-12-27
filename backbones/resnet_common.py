@@ -61,6 +61,8 @@ WEIGHTS_HASHES = {
 }
 
 
+
+
 def block1(x, filters, kernel_size=3, stride=1,
            conv_shortcut=True, name=None):
     """A residual block.

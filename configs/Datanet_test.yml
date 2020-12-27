@@ -1,7 +1,7 @@
 DATASET:
   Data_augementation: true
 NETWORK:
-  Backbone: ResNet50V2
+  Backbone: ResNet50
   INPUT_SIZE: 256
   MARGIN: 1.0
   embedding_size: 128
@@ -12,16 +12,18 @@ PROJECT:
   project: Active_Learning_Datanet
   project_dir: /mnt/Ressources/Andres/runs
 TEST:
-  batch_size: 44
+  batch_size: 16
 TRAIN:
-  EPOCH_SLIT: 40
-  EPOCH_WARMUP: 2
-  EPOCH_WHOLE: 40
+  EPOCH_SLIT: 60
+  EPOCH_WARMUP: 5
+  EPOCH_WHOLE: 60
   MILESTONES:
-  - 25
-  - 35
+  - 30
+  - 60
+  - 90
   batch_size: 32
-  lr: 0.01
+  lr: 0.002
   test_each: 1
-  transfer_weight_path: false
+  transfer_weight_path: /mnt/Ressources/Andres/runs/imagenet/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
   weight_lossnet_loss: 1.0
+  weight_decay: 0.00002

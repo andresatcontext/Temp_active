@@ -179,16 +179,16 @@ class ClassificationDataset:
                 tf_data = tf_data.apply(tf.contrib.data.ignore_errors())
                 tf_data = tf_data.prefetch(100)
 
-                data_tensors = tf_data.make_one_shot_iterator().get_next()
-                tf.summary.image("input_images", data_tensors[0],max_outputs=16)
-                self.images_tensor = data_tensors[0]
+                self.data_tensors = tf_data.make_one_shot_iterator().get_next()
+                tf.summary.image("input_images", self.data_tensors[0],max_outputs=16)
+                self.images_tensor = self.data_tensors[0]
                 
                 self.labels_tensor = {}
-                self.labels_tensor['Classifier'] = data_tensors[1]
-                self.labels_tensor['l_pred_w']   = data_tensors[1]
-                self.labels_tensor['l_pred_s']   = data_tensors[1]
+                self.labels_tensor['Classifier'] = self.data_tensors[1]
+                self.labels_tensor['l_pred_w']   = self.data_tensors[1]
+                self.labels_tensor['l_pred_s']   = self.data_tensors[1]
 
-                self.files_tensor = data_tensors[2]
+                self.files_tensor = self.data_tensors[2]
 
     def load_metadata(self, no_image_check):
         

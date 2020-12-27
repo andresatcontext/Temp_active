@@ -1,51 +1,48 @@
+from AutoML import DataNet, AutoMLDataset, local_module, local_file, AutoML, get_run_watcher, get_user
 import ray
 
 @ray.remote(num_gpus=1)
-class Active_Learning_test_stage:
-    def __init__(self,  config , num_run, test_set):
-        
+class Active_Learning_test:
+    def __init__(self,   config, 
+                         dataset,
+                         num_run):
+
         
         #############################################################################################
         # LIBRARIES
-        ############################################################################################# 
+        #############################################################################################        
         import os
+        import numpy as np
+        import tensorflow as tf
+        from tensorflow.python import pywrap_tensorflow
+        from tensorflow.keras import optimizers, losses, models, backend, layers, metrics
+        
         self.run_path = os.path.dirname(os.path.realpath(__file__))
         os.chdir(self.run_path)
-        
-        from AutoML import AutoMLDataset, local_module
-        import tensorflow as tf
-        from tensorflow.keras import backend, layers, models, utils
-        
         core = local_module("core")
-
         backbones = local_module("backbones")
-
-        from tensorflow.python import pywrap_tensorflow
-        import numpy as np
-        import pandas as pd
-        
         
         #############################################################################################
-        # PARAMETERS 
+        # PARAMETERS RUN
         #############################################################################################
-        self.config        = config
-        self.source        = config["PROJECT"]["source"]
-        self.num_run       = num_run
-        self.group         = "Stage_"+str(num_run)
-        self.name_run      = "Test_"+self.group 
+        self.config          = config
+        self.dataset         = dataset
+        self.num_run         = num_run
+        self.group           = "All"
+        self.name_run        = "Test"+self.group 
         
         self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group)
         self.run_dir_check   = os.path.join(self.run_dir ,'checkpoints')
         self.checkpoints_path= os.path.join(self.run_dir_check,'checkpoint.{epoch:03d}.hdf5')
-        #self.user            = get_user()
-        self.stop_flag       = False
+        self.user            = get_user()
         
-        self.num_class       = len(self.config["NETWORK"]["CLASSES"])
-        self.input_shape     = [self.config["NETWORK"]["INPUT_SIZE"], self.config["NETWORK"]["INPUT_SIZE"], 3]
+        self.transfer_weight_path = self.config['TRAIN']["transfer_weight_path"]
+        self.input_shape       = [self.config["NETWORK"]["INPUT_SIZE"], self.config["NETWORK"]["INPUT_SIZE"], 3]
         
         self.pre ='\033[1;36m' + self.name_run + '\033[0;0m' #"____" #
         self.problem ='\033[1;31m' + self.name_run + '\033[0;0m'
         
+        # Creating the test folder
         self.evaluation_folder = os.path.join(self.run_dir, 'evaluation')
         self.evaluation_file   = os.path.join(self.evaluation_folder, "accuracy_epoch.csv")
         
@@ -53,15 +50,15 @@ class Active_Learning_test_stage:
             os.mkdir(self.evaluation_folder)
         except:
             pass
-
-        # list the epochs to evaluate
-        files_run_dir_check = os.listdir(self.run_dir_check)
-        self.epochs_checked = [int(i.split('.')[-2]) for i in files_run_dir_check if i.endswith('hdf5')]
-        self.epochs_checked.sort()
-
-        #######################################################################
+        
+        epochs_checked = [int(i.split('.')[-2]) for i in os.listdir(self.run_dir_check) if i.endswith('.hdf5')]
+        epochs_checked.sort()
+        self.epochs_checked = epochs_checked
+        print(epochs_checked)
+        
+        #############################################################################################
         # SETUP TENSORFLOW SESSION
-        #########################################################################
+        #############################################################################################
 
         self.graph = tf.Graph()
         with self.graph.as_default():
@@ -69,10 +66,10 @@ class Active_Learning_test_stage:
             config_tf.gpu_options.allow_growth = True 
             self.sess = tf.Session(config=config_tf,graph=self.graph)
             with self.sess.as_default():
-        
-                ###################################################################
+
+                #############################################################################################
                 # SETUP WANDB
-                ####################################################################
+                #############################################################################################
                 import wandb
 
                 self.wandb = wandb
@@ -82,29 +79,32 @@ class Active_Learning_test_stage:
                                 job_type = self.group ,
                                 sync_tensorboard = True,
                                 config = config)
-                ####################################################################
+
+                #############################################################################################
                 # LOAD DATA
-                #####################################################################
-                if self.config["PROJECT"]["source"]=='CIFAR':
-                    from data_utils import CIFAR10Data
-                    # Load data
-                    cifar10_data = CIFAR10Data()
-                    _, _, x_test, y_test = cifar10_data.get_data(normalize_data=False)
-                else:
-                    raise NameError('This is not implemented yet')
-                    
-                ###########################################################################
-                # DATA GENERATOR
-                ###########################################################################
-                self.Data_Generator = core.Generator_cifar_test(x_test, y_test, config)
-
-
-                ##########################################################################
+                #############################################################################################
+                self.DataGen = core.ClassificationDataset(  config["TEST"]["batch_size"],
+                                                             self.dataset,
+                                                             data_augmentation=False,
+                                                            sampling="test",
+                                                             subset="test")
+                
+                self.num_class = len(self.DataGen.list_classes)
+                
+                #############################################################################################
+                # GLOBAL PROGRESS
+                #############################################################################################
+                self.steps_per_epoch  = int(np.ceil(self.DataGen.nb_elements/config["TEST"]["batch_size"]))
+                print(self.pre,'Number of elements in the test set', self.DataGen.nb_elements)
+                
+                
+                #############################################################################################
                 # DEFINE CLASSIFIER
-                ##########################################################################
+                #############################################################################################
                 # set input
-                img_input = tf.keras.Input(self.input_shape,name= 'input_image')
-
+                img_input = tf.keras.Input(tensor=self.DataGen.images_tensor,name= 'input_image')
+                #img_input = tf.keras.Input(self.input_shape,name= 'input_image')
+                
                 include_top = True
 
                 # Get the selected backbone
@@ -119,10 +119,11 @@ class Active_Learning_test_stage:
                 ResNeXt50
                 ResNeXt101
                 """
-                self.backbone = getattr(backbones,"ResNet18_cifar")
+                print(self.pre, "The backbone is: ",self.config["NETWORK"]["Backbone"])
+                self.backbone = getattr(backbones,self.config["NETWORK"]["Backbone"])
                 #
                 c_pred_features = self.backbone(input_tensor=img_input, classes= self.num_class, include_top=include_top)
-                self.c_pred_features= c_pred_features
+                self.c_pred_features=  c_pred_features
                 if include_top: # include top classifier
                     # class predictions
                     c_pred = c_pred_features[0]
@@ -130,100 +131,107 @@ class Active_Learning_test_stage:
                     x = layers.GlobalAveragePooling2D(name='pool1')(c_pred_features[0])
                     x = layers.Dense(self.num_class, name='fc1')(x)
                     c_pred = layers.Activation('softmax', name='c_pred')(x)
-                    c_pred_features[0]=c_pred
+                    c_pred_features[0] = c_pred
 
                 self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
+                
 
-                ###################################################################
+                #############################################################################################
                 # DEFINE FULL MODEL
-                ####################################################################
+                #############################################################################################
                 c_pred_features_1 = self.classifier(img_input)
                 c_pred_1 = c_pred_features_1[0]
-
-                # define lossnet
                 loss_pred_embeddings = core.Lossnet(c_pred_features_1, self.config["NETWORK"]["embedding_size"])
-
-                self.model = models.Model(inputs=img_input, outputs=[c_pred_1]+loss_pred_embeddings)
                 
-        
-                ##################################################################
+                # add some inputs to prediction and testing
+                labels_tensor = tf.keras.Input(tensor=self.DataGen.data_tensors[1], name= 'labels_tensor')
+                files_tesor   = tf.keras.Input(tensor=self.DataGen.data_tensors[2], name= 'files_tesor')
+                
+                model_inputs  = [img_input, labels_tensor, files_tesor]
+                model_outputs = [c_pred_1, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
+                
+                self.model = models.Model(inputs=model_inputs, outputs=model_outputs)
+
+                #############################################################################################
+                # DEFINE METRICS
+                #############################################################################################
+                # metrics
+                self.metrics_dict = {}
+                self.metrics_dict['Classifier'] = metrics.sparse_categorical_accuracy
+                self.metrics_dict['l_pred_w']   = core.MAE_Lossnet
+                self.metrics_dict['l_pred_s']   = core.MAE_Lossnet
+
+
+                #############################################################################################
                 # DEFINE CALLBACKS
-                ##################################################################
+                #############################################################################################
                 # Checkpoint saver
                 self.callbacks = []
 
                 # Callback to wandb
                 self.callbacks.append(self.wandb.keras.WandbCallback())
-                
-                ################################################################
+
+
+
+
+                #############################################################################################
                 # INIT VARIABLES
-                ################################################################
+                #############################################################################################
                 #self.sess.graph.as_default()
                 backend.set_session(self.sess)
                 self.sess.run(tf.local_variables_initializer())
-                
+
+                ################################################################
+                # SETUP WATCHER
+                ################################################################    
                 print(self.pre,'Init done')
-                
-
-    @ray.method(num_returns = 1)
-    def get_wandb_id(self):
-        return self.run_id
-
 
     @ray.method(num_returns = 0)
     def evaluate(self):
-        
-        import os
         import numpy as np
-        import time
-        import plotly.graph_objects as go
         from sklearn import metrics
         import pandas as pd
-
+        import os
+        
         with self.graph.as_default():
             with self.sess.as_default():
+                print( self.pre ,"Start testing")
                 for epoch in self.epochs_checked:
                     
-                    weight_file  = os.path.join(self.run_dir, 'checkpoints',  f'checkpoint.{epoch:03d}.hdf5')
-
-                    if not os.path.isfile(self.evaluation_file ) or epoch==0:
+                    if not os.path.isfile(self.evaluation_file ) or epoch==1:
                         df = pd.DataFrame(columns=['epoch','accuracy'])
                         df.to_csv(self.evaluation_file )
                     else:
                         df = pd.read_csv(self.evaluation_file ,index_col=0)
 
-                    print(self.pre, 'Restoring from '+str(weight_file))
-                    self.model.load_weights(weight_file)
-
                     #############################################################################################
-                    # INFER THE TEST SET
+                    # LOAD PATH TO TEST
                     #############################################################################################
+                    model_path = os.path.join(self.run_dir_check,f'checkpoint.{epoch:03d}.hdf5')
+                    print(self.pre, "Loading weigths from: ",model_path)
+                    self.model.load_weights(model_path)
                     
-                    for i, (X,Y) in enumerate(self.Data_Generator.data_tensors):
-                        preds  = self.model.predict(X)
-                        if i==0:
-                            labels   = Y[0]
-                            c_pred   = preds[0]
-                            l_pred_w = preds[1][:,-1]
-                            l_pred_s = preds[2][:,-1]
-                        else :
-                            labels   = np.concatenate([labels,Y[0]])  
-                            c_pred   = np.concatenate([c_pred,preds[0]])
-                            l_pred_w = np.concatenate([l_pred_w,preds[1][:,-1]])
-                            l_pred_s = np.concatenate([l_pred_s,preds[2][:,-1]])
-
+                    #############################################################################################
+                    # INFER TEST SET
+                    #############################################################################################
+                    results = self.model.predict(None,steps=self.steps_per_epoch)
+                    
+                    for i, res in enumerate(results):
+                        results[i] = res[:self.DataGen.nb_elements]
+                        
+                    print('Check number of different files: ',len(set(results[-1])))
 
                     #############################################################################################
                     # GET VALUES
                     #############################################################################################
-                    
-                    pred_array = np.argmax(c_pred,axis=1)
-                    annot_array = np.argmax(labels,axis=1)
-                    scores_array = np.max(c_pred,axis=1)
+                    # c_pred_1, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
+                    pred_array = np.argmax(results[0],axis=1)
+                    annot_array = np.squeeze(results[3])
+                    scores_array = np.max(results[0],axis=1)
                     correctness_array = (pred_array==annot_array).astype(np.int64)
 
-                    #true_loss = list_np[2]
-                    #pred_loss = list_np[3]
+
+                    pred_loss    = results[1][:,-1]
 
                     print(self.pre,"Length of the test: ", len(pred_array))
 
@@ -251,22 +259,11 @@ class Active_Learning_test_stage:
                     self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=epoch)  
 
                     # Compute confusion matrix to evaluate the accuracy of a classification.
-                    if len(self.config["NETWORK"]["CLASSES"])<200:
+                    if len(self.DataGen.list_classes)<200:
                         cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
                         fig_cm = self.Plot_confusion_matrix(cm)
                         self.wandb.log({'Confusion Matrix' : fig_cm}, step=epoch)
 
-                    ######## Regression (loss estimation)
-                    """
-                    mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
-                    self.wandb.log({'Mean absolute error': mae_v1}, step=epoch)
-
-                    evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
-                    self.wandb.log({'Explained variance': evs_v1}, step=epoch)
-
-                    mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
-                    self.wandb.log({'Mean squared error': mse_v1}, step=epoch)
-                    """
 
                     #############################################################################################
                     # Save accuracy and epoch to select best model
@@ -280,10 +277,8 @@ class Active_Learning_test_stage:
                     to_print += "Accuracy: %.2f || "%(100*accuracy)
 
                     print(self.pre, to_print)
-                # for
-
-                df.to_csv(self.evaluation_file)
-
+                    
+                    df.to_csv(self.evaluation_file)
                   
     def Plot_confusion_matrix(self,cm):
         
@@ -300,8 +295,8 @@ class Active_Learning_test_stage:
         # Compute and save confusion matrix
         fig = go.Figure({'data': [
                             {
-                                'x': self.config["NETWORK"]["CLASSES"],
-                                'y': self.config["NETWORK"]["CLASSES"],
+                                'x': self.DataGen.list_classes,
+                                'y': self.DataGen.list_classes,
                                 'z': cm.tolist(),
                                 'type': 'heatmap', 'name': 'Confusion_matrix',
                                 'colorscale': [[0, 'rgb(255, 255, 255)'],
@@ -365,3 +360,8 @@ class Active_Learning_test_stage:
                         }
                         })
         return fig
+
+
+
+
+
