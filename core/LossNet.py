@@ -112,7 +112,7 @@ class Change_loss_weights(Callback):
         self.weight_lossnet_loss = weight_lossnet_loss
     # customize your behavior
     def on_epoch_end(self, epoch, logs={}):
-        print(logs)
+        #print(logs)
         if epoch == self.split_epoch-1:
             print("Change to split learning")
             print('Previus weigths',self.weight_w,self.weight_s)
@@ -126,6 +126,7 @@ class Change_loss_weights(Callback):
             
         if epoch == self.split_epoch-1:
             print('Updated weigths',self.weight_w,self.weight_s)
+            
         
 def add_weight_decay(model, weight_decay):
     if (weight_decay is None) or (weight_decay == 0.0):

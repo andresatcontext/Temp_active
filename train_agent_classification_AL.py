@@ -1,10 +1,11 @@
 from AutoML import DataNet, AutoMLDataset, local_module, local_file, AutoML, get_run_watcher, get_user
 import ray
 
-@ray.remote(num_gpus=1, resources={"gpu_lvl_2" : 1})
+@ray.remote(num_gpus=1)#, resources={"gpu_lvl_2" : 1})
 class Active_Learning_train:
     def __init__(self,   config, 
-                         dataset,
+                         filenames,
+                         labels,
                          num_run=0,
                          resume_model_path=False,
                          resume = False):
@@ -29,7 +30,8 @@ class Active_Learning_train:
         # PARAMETERS RUN
         #############################################################################################
         self.config          = config
-        self.dataset         = dataset
+        self.filenames       = filenames
+        self.labels          = labels
         self.num_run         = num_run
         self.group           = "Stage_"+str(num_run)
         self.name_run        = "Train_"+self.group 
@@ -104,20 +106,13 @@ class Active_Learning_train:
                     #############################################################################################
                     # LOAD DATA
                     #############################################################################################
-                    self.DataGen = core.ClassificationDataset(  config["TRAIN"]["batch_size"],
-                                                                self.dataset,
-                                                                data_augmentation=config["DATASET"]["Data_augementation"],
-                                                                subset="train",
-                                                                original_size      = config["DATASET"]["original_size"],
-                                                                pad                = config["DATASET"]["pad"],
-                                                                sampling           = config["DATASET"]["sampling"],
-                                                                random_crop_margin = config["DATASET"]["random_crop_margin"],
-                                                                random_greyscale   = config["DATASET"]["random_greyscale"],
-                                                                random_hue         = config["DATASET"]["random_hue"],
-                                                                rot90              = config["DATASET"]["rot90"],
-                                                                random_brightness  = config["DATASET"]["random_brightness"],
-                                                                random_saturation  = config["DATASET"]["random_saturation"])  
-                    
+                    self.DataGen = core.AL_temp_Dataset( config["TRAIN"]["batch_size"],
+                                                         self.filenames,
+                                                         self.labels,
+                                                         data_augmentation=config["DATASET"]["Data_augementation"],
+                                                         subset="train",
+                                                         random_brightness=True,
+                                                         random_saturation=True)  
 
                     self.num_class = len(self.DataGen.list_classes)
 

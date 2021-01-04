@@ -28,7 +28,7 @@ class Active_Learning_test:
         self.config          = config
         self.dataset         = dataset
         self.num_run         = num_run
-        self.group           = "All"
+        self.group           = "Stage_"+str(num_run)
         self.name_run        = "Test"+self.group 
         
         self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group)
@@ -86,7 +86,7 @@ class Active_Learning_test:
                 self.DataGen = core.ClassificationDataset(  config["TEST"]["batch_size"],
                                                              self.dataset,
                                                              data_augmentation=False,
-                                                            sampling="test",
+                                                             sampling="test",
                                                              subset="test")
                 
                 self.num_class = len(self.DataGen.list_classes)
@@ -133,22 +133,22 @@ class Active_Learning_test:
                     c_pred = layers.Activation('softmax', name='c_pred')(x)
                     c_pred_features[0] = c_pred
 
-                self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
+                #self.classifier = models.Model(inputs=[img_input], outputs=c_pred_features,name='Classifier') 
                 
 
                 #############################################################################################
                 # DEFINE FULL MODEL
                 #############################################################################################
-                c_pred_features_1 = self.classifier(img_input)
-                c_pred_1 = c_pred_features_1[0]
-                loss_pred_embeddings = core.Lossnet(c_pred_features_1, self.config["NETWORK"]["embedding_size"])
+                #c_pred_features_1 = self.classifier(img_input)
+                #c_pred_1 = c_pred_features_1[0]
+                loss_pred_embeddings = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
                 
                 # add some inputs to prediction and testing
                 labels_tensor = tf.keras.Input(tensor=self.DataGen.data_tensors[1], name= 'labels_tensor')
                 files_tesor   = tf.keras.Input(tensor=self.DataGen.data_tensors[2], name= 'files_tesor')
                 
                 model_inputs  = [img_input, labels_tensor, files_tesor]
-                model_outputs = [c_pred_1, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
+                model_outputs = [c_pred, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
                 
                 self.model = models.Model(inputs=model_inputs, outputs=model_outputs)
 
@@ -170,9 +170,6 @@ class Active_Learning_test:
 
                 # Callback to wandb
                 self.callbacks.append(self.wandb.keras.WandbCallback())
-
-
-
 
                 #############################################################################################
                 # INIT VARIABLES
@@ -211,6 +208,8 @@ class Active_Learning_test:
                     print(self.pre, "Loading weigths from: ",model_path)
                     self.model.load_weights(model_path)
                     
+                    #self.sess.run(self.DataGen.data_tensors.initializer)
+                    
                     #############################################################################################
                     # INFER TEST SET
                     #############################################################################################
@@ -230,10 +229,11 @@ class Active_Learning_test:
                     scores_array = np.max(results[0],axis=1)
                     correctness_array = (pred_array==annot_array).astype(np.int64)
 
-
+                    files_names = results[4]
                     pred_loss    = results[1][:,-1]
 
                     print(self.pre,"Length of the test: ", len(pred_array))
+                    print(self.pre,'First and last file: ',files_names[0],files_names[-1])
 
                     #############################################################################################
                     # COMPUTE METRICS

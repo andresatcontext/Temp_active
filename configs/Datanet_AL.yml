@@ -1,5 +1,16 @@
 DATASET:
   Data_augementation: true
+  original_size: 256
+  pad: False
+  sampling: log_proportional
+  random_crop: true
+  random_crop_margin: 0.1
+  random_flip: true
+  random_greyscale: False
+  random_hue :  False
+  rot90: False
+  random_brightness: false
+  random_saturation: false
 NETWORK:
   Backbone: ResNet50
   INPUT_SIZE: 256
@@ -7,23 +18,23 @@ NETWORK:
   embedding_size: 128
 PROJECT:
   dataset_name: person_classification
-  group: Classification_v0
-  group_dir: /mnt/Ressources/Andres/runs/Classification_v0
+  group: AL_v1
+  group_dir: /mnt/Ressources/Andres/runs/AL_v1
   project: Active_Learning_Datanet
   project_dir: /mnt/Ressources/Andres/runs
 TEST:
   batch_size: 16
 TRAIN:
-  EPOCH_SLIT: 60
-  EPOCH_WARMUP: 5
-  EPOCH_WHOLE: 60
+  EPOCH_SLIT: 80
+  EPOCH_WARMUP: 2
+  EPOCH_WHOLE: 120
   MILESTONES:
-  - 30
-  - 60
-  - 90
-  batch_size: 32
-  lr: 0.002
+  - 140
+  - 180
+  batch_size: 16
+  lr: 0.0025
   test_each: 1
   transfer_weight_path: /mnt/Ressources/Andres/runs/imagenet/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
   weight_lossnet_loss: 1.0
   weight_decay: 0.00002
+  apply_weight_decay: false

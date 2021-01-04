@@ -10,11 +10,12 @@ from multiprocessing.pool import ThreadPool
 
 
 
-class ClassificationDataset:
+class AL_temp_Dataset:
     def __init__(self,
                  batchsize,
-                 dataset,
-                 data_augmentation=True,
+                 filenames,
+                 labels,
+                 data_augmentation=False,
                  outsize=None,
                  original_size=256,
                  pad=False,
@@ -24,6 +25,8 @@ class ClassificationDataset:
                  random_greyscale=False,
                  random_hue = False,
                  rot90=False,
+                 random_brightness=False,
+                 random_saturation=False,
                  no_image_check=False):
         """Create the datagenerator for classification using tf.data.Dataset
 
@@ -76,31 +79,25 @@ class ClassificationDataset:
         with tf.device("/cpu:0"):
             with tf.name_scope("Classification_Dataset"):
                 self.batchsize = batchsize
-                self.path = dataset
+                self.filenames = filenames
+                self.labels = labels
                 self.side_size = original_size
                 self.sampling = sampling
                 self.subset = subset
                 print("Subset set to : "+subset)
-                self.load_metadata(no_image_check)
 
                 self.x_dim = self.side_size
                 self.y_dim = self.side_size
-
-                if sampling == "id_sampling":
-                    class_choice = np.arange(0, self.nb_classes, dtype=np.int32)
-
-                    def batch_generator():
-                        r_classes = np.random.choice(class_choice, size=batchsize, replace=False, p=self.class_probas)
-                        batch = []
-                        i = 0
-                        nb_elements = 0
-                        while len(batch) < self.batchsize:
-                            nb_samples = min(batchsize - nb_elements,len(self.classes[r_classes[i]]),np.random.randint(low=1,high=5))
-                            batch.append(np.random.choice(self.classes[r_classes[i]], size=nb_samples, replace=False))
-                            nb_elements += nb_samples
-                            i+=1
-                        yield np.concatenate(batch, axis=0)
-                elif sampling == "test":
+                
+                self.from_datanet= True
+                self.source="AutoML"
+                self.nb_elements = len(filenames)
+                self.files = tf.constant(filenames, name="files")
+                self.labels = tf.constant(labels, name="labels")
+                self.list_classes = list(set(labels))
+                self.class_names=tf.constant(list(set(labels)), name="class_names")
+                
+                if subset == "test":
                     def batch_generator():
                         i = 0
                         while i < self.nb_elements:
@@ -112,8 +109,8 @@ class ClassificationDataset:
                 else:
                     file_choices = np.arange(0, self.nb_elements, dtype=np.int32)
                     def batch_generator():
-                        yield np.random.choice(file_choices, size=batchsize, replace=False, p=self.files_proba)
-
+                        yield np.random.choice(file_choices, size=batchsize, replace=False)
+                
                 tf_data = tf.data.Dataset.from_generator(batch_generator, output_types=np.int32, output_shapes=[batchsize])
                 tf_data = tf_data.repeat()
                 tf_data = tf_data.prefetch(1000)
@@ -145,6 +142,9 @@ class ClassificationDataset:
                     else:
                         images = tf.map_fn(reader, files, dtype = tf.uint8, parallel_iterations=nb_parallel)
                     images = tf.reshape(images, [self.batchsize, self.side_size, self.side_size, 3])
+                    if False:
+                        images = tf.image.convert_image_dtype(images, tf.float32)
+                    
                     images = tf.cast(images, dtype=tf.float32)
                     if outsize_ != None:
                         images = tf.image.resize_images(images, [outsize_, outsize_])
@@ -152,7 +152,11 @@ class ClassificationDataset:
                         outsize_=256
 
                     images = tf.image.per_image_standardization(tf.cast(images, dtype=tf.dtypes.float32))
+                    
                     if data_augmentation:
+                        ################################
+                        # Random crop to every image
+                        ################################
                         marge = random_crop_margin
                         base = 1.0-random_crop_margin
                         offset = [[0,0,base,base]]
@@ -160,20 +164,49 @@ class ClassificationDataset:
                         images = tf.image.crop_and_resize(images, boxes = boxes,
                                                           box_ind=np.array(range(batchsize),dtype=np.int32),
                                                           crop_size=[outsize_,outsize_])
+                        ################################
+                        # random_brightness
+                        ################################
+                        if random_brightness:
+                            images = tf.image.random_brightness(images, max_delta=32.0 / 255.0)
+                            
+                        ################################
+                        # random_saturation
+                        ################################
+                        if random_saturation:
+                            images = tf.image.random_saturation(images, lower=0.5, upper=1.5)
+                            
+                        ################################
+                        # random hue to 5 % of the images
+                        ################################
                         if random_hue:
                             images_hue = tf.map_fn(lambda x : tf.image.random_hue(x, 0.1), images)
                             images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95),
                                               x=images_hue, y=images)
+                            
+                        ################################
+                        # random 90` rotation to 5 % of the images
+                        ################################
                         if rot90:
                             for k in [1, 2, 3]:
                                 images_rot = tf.map_fn(lambda x : tf.image.rot90(x,k=k), images)
                                 images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95),
                                                   x=images_rot, y=images)
-                        images = tf.image.random_flip_left_right(images)
+                                
+                        ################################
+                        # random greyscale to 5 % of the images
+                        ################################
                         if random_greyscale:
                             images_grey = tf.reduce_mean(images, axis=-1)
                             images_grey = tf.stack([images_grey, images_grey, images_grey], axis=-1)
                             images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95), x = images_grey, y = images)
+                        
+                        ################################
+                        # random flip (normally 1/2 of the images)
+                        ################################
+                        images = tf.image.random_flip_left_right(images)
+                            
+                    images = tf.clip_by_value(images, 0.0, 1.0)
                     return images
                 tf_data = tf_data.map(lambda x : (read_op(x), tf.expand_dims(tf.gather(self.labels, x), -1), tf.gather(self.files, x)), num_parallel_calls=6)
                 tf_data = tf_data.apply(tf.data.experimental.ignore_errors())
@@ -189,86 +222,3 @@ class ClassificationDataset:
                 self.labels_tensor['l_pred_s']   = self.data_tensors[1]
 
                 self.files_tensor = self.data_tensors[2]
-
-    def load_metadata(self, no_image_check):
-        
-        if isinstance(self.path, AutoMLDataset):
-            self.dataset_header = self.path.get_dataset_header()
-            self.from_datanet = True
-            if "source" in self.dataset_header:
-                self.source = self.dataset_header["source"]
-            else:
-                self.source="AutoML"
-        else:
-            self.from_datanet = False
-            self.source = None
-            id_directories = sorted(glob.glob(os.path.join(self.path, self.subset, "*/")))
-            dataset_header = {}
-            dataset_header[self.subset+"_images"] = {}
-            
-            for i in range(len(id_directories)):
-                id_dir = id_directories[i]
-                splt_dir = id_dir.split("/")
-                class_name = splt_dir[-2].replace("\n", "")
-
-                id_files = glob.glob(id_dir+"*.jpg") + glob.glob(id_dir+"*.png")
-                if not no_image_check:
-                    valid_id_files = []
-                    for img in id_files:
-                        try:
-                            im = Image.open(img)
-                            valid_id_files.append(img)
-                        except Exception as e:
-                            pass
-                    id_files = valid_id_files
-                dataset_header[self.subset+"_images"][class_name] = id_files        
-            self.dataset_header = dataset_header
-                    
-        
-        list_classes = list(self.dataset_header[self.subset+"_images"].keys())
-                                    
-        self.nb_classes = len(list_classes)        
-        self.classes={}
-        files = []
-        labels = []
-        nb_img_per_class = np.zeros(self.nb_classes, dtype = np.int32)
-        classes_cardinality = {}
-        
-        for class_name in list(self.dataset_header[self.subset+"_images"].keys()):
-            class_index = list_classes.index(class_name)
-            classes_cardinality[class_name] = len(self.dataset_header[self.subset+"_images"][class_name])
-            nb_img_per_class[class_index] = classes_cardinality[class_name]
-            start = len(files)
-            id_files = self.dataset_header[self.subset+"_images"][class_name]
-            files+=id_files
-            labels+=[class_index] * len(id_files)
-            end = len(files)
-            self.classes[class_index]=range(start, end)
-
-        nb_img_per_class = np.array(nb_img_per_class)
-        #probas = np.array(np.minimum(nb_img_per_class, 50), dtype=np.float32)
-        if self.sampling == "log_proportional":
-            probas = np.square(np.maximum(np.log(nb_img_per_class)+1.0,0.001))
-        elif self.sampling == "equi_class":
-            probas = 1.0 / nb_img_per_class
-        elif self.sampling == "id_sampling":
-            # probas = np.array(nb_img_per_class, dtype=np.float32)
-            probas = np.square(np.maximum(np.log(nb_img_per_class) + 1.0, 0.001))
-        else:
-            probas = np.square(np.maximum(np.log(nb_img_per_class) + 1.0, 0.001))
-        probas = probas / np.sum(probas)
-        files_proba = []
-        for p, class_card in zip(probas, nb_img_per_class):
-            files_proba += [ p for i in range(class_card)]
-        self.files_proba = np.array(files_proba)
-        self.files_proba = files_proba / np.sum(files_proba)
-        self.class_probas = probas
-
-        assert len(files) > 0
-
-        self.nb_elements = len(files)
-        self.files = tf.constant(files, name="files")
-        self.labels = tf.constant(labels, name="labels")
-        self.class_names=tf.constant(list_classes, name="class_names")
-        self.list_classes = list_classes
-

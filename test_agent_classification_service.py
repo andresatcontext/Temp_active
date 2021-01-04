@@ -5,8 +5,7 @@ import ray
 class Active_Learning_test:
     def __init__(self,   config, 
                          dataset,
-                         num_run,
-                         model_path):
+                         num_run):
 
         
         #############################################################################################
@@ -29,7 +28,7 @@ class Active_Learning_test:
         self.config          = config
         self.dataset         = dataset
         self.num_run         = num_run
-        self.group           = "All"
+        self.group           = "Stage_"+str(num_run)
         self.name_run        = "Test"+self.group 
         
         self.run_dir         = os.path.join(config["PROJECT"]["group_dir"],self.group)
@@ -51,6 +50,7 @@ class Active_Learning_test:
             os.mkdir(self.evaluation_folder)
         except:
             pass
+
         
         #############################################################################################
         # SETUP TENSORFLOW SESSION
@@ -82,7 +82,7 @@ class Active_Learning_test:
                 self.DataGen = core.ClassificationDataset(  config["TEST"]["batch_size"],
                                                              self.dataset,
                                                              data_augmentation=False,
-                                                            sampling="test",
+                                                             sampling="test",
                                                              subset="test")
                 
                 self.num_class = len(self.DataGen.list_classes)
@@ -91,6 +91,8 @@ class Active_Learning_test:
                 # GLOBAL PROGRESS
                 #############################################################################################
                 self.steps_per_epoch  = int(np.ceil(self.DataGen.nb_elements/config["TEST"]["batch_size"]))
+                self.total_epochs  = self.config['TRAIN']["EPOCH_WHOLE"] + self.config['TRAIN']["EPOCH_SLIT"]
+                self.total_tests = int(np.floor(self.total_epochs/self.config['TRAIN']["test_each"]))
                 print(self.pre,'Number of elements in the test set', self.DataGen.nb_elements)
                 
                 
@@ -149,36 +151,6 @@ class Active_Learning_test:
                 self.model = models.Model(inputs=model_inputs, outputs=model_outputs)
 
                 #############################################################################################
-                # DEFINE METRICS
-                #############################################################################################
-                # metrics
-                self.metrics_dict = {}
-                self.metrics_dict['Classifier'] = metrics.sparse_categorical_accuracy
-                self.metrics_dict['l_pred_w']   = core.MAE_Lossnet
-                self.metrics_dict['l_pred_s']   = core.MAE_Lossnet
-
-
-                #############################################################################################
-                # DEFINE CALLBACKS
-                #############################################################################################
-                # Checkpoint saver
-                self.callbacks = []
-
-                # Callback to wandb
-                self.callbacks.append(self.wandb.keras.WandbCallback())
-
-
-                #############################################################################################
-                # LOAD PATH TO TEST
-                #############################################################################################
-
-                self.loaded_epoch = int(model_path.split('.')[-2])
-                print(self.pre, "Loading weigths from: ",model_path)
-                print(self.pre, "The detected epoch is: ",self.loaded_epoch)
-                # load weigths
-                self.model.load_weights(model_path)
-
-                #############################################################################################
                 # INIT VARIABLES
                 #############################################################################################
                 #self.sess.graph.as_default()
@@ -195,96 +167,117 @@ class Active_Learning_test:
         import numpy as np
         from sklearn import metrics
         import pandas as pd
+        import os
+        import time
         
         with self.graph.as_default():
             with self.sess.as_default():
-                print( self.pre ,"Start testing")
-                results = self.model.predict(None,steps=self.steps_per_epoch)
+                print( self.pre ,"Start testing service")
+                epochs_checked = []
+                while True:
+                    while True:
+                        read_folder = [int(i.split('.')[-2]) for i in os.listdir(self.run_dir_check) if i.endswith('.hdf5')]
+                        new_epochs = list(set(read_folder) - set(epochs_checked))
+                        time.sleep(5)
+                        if new_epochs:
+                            new_epochs.sort()
+                            break
+                        
+
+                    for epoch in new_epochs:
+
+                        if not os.path.isfile(self.evaluation_file ) or epoch==1:
+                            df = pd.DataFrame(columns=['epoch','accuracy'])
+                            df.to_csv(self.evaluation_file )
+                        else:
+                            df = pd.read_csv(self.evaluation_file ,index_col=0)
+
+                        #############################################################################################
+                        # LOAD PATH TO TEST
+                        #############################################################################################
+                        model_path = os.path.join(self.run_dir_check,f'checkpoint.{epoch:03d}.hdf5')
+                        print(self.pre, "Loading weigths from: ",model_path)
+                        self.model.load_weights(model_path)
+
+                        #self.sess.run(self.DataGen.data_tensors.initializer)
+
+                        #############################################################################################
+                        # INFER TEST SET
+                        #############################################################################################
+                        results = self.model.predict(None,steps=self.steps_per_epoch)
+
+                        for i, res in enumerate(results):
+                            results[i] = res[:self.DataGen.nb_elements]
+
+                        print('Check number of different files: ',len(set(results[-1])))
+
+                        #############################################################################################
+                        # GET VALUES
+                        #############################################################################################
+                        # c_pred_1, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
+                        pred_array = np.argmax(results[0],axis=1)
+                        annot_array = np.squeeze(results[3])
+                        scores_array = np.max(results[0],axis=1)
+                        correctness_array = (pred_array==annot_array).astype(np.int64)
+
+                        files_names = results[4]
+                        pred_loss    = results[1][:,-1]
+
+                        #print(self.pre,"Length of the test: ", len(pred_array))
+                        #print(self.pre,'First and last file: ',files_names[0],files_names[-1])
+
+                        #############################################################################################
+                        # COMPUTE METRICS
+                        #############################################################################################
+
+                        ######## Classification
+
+                        # Compute the F1 score, also known as balanced F-score or F-measure
+                        f1 = metrics.f1_score(annot_array, pred_array, average='macro')
+                        self.wandb.log({'F1 score': f1}, step=epoch)
+
+                        # Accuracy classification score
+                        accuracy = metrics.accuracy_score(annot_array, pred_array)
+                        self.wandb.log({'Test: Classification Accuracy': accuracy}, step=epoch)
+
+                        # Compute Receiver operating characteristic (ROC)
+                        false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
+                        fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
+                        self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=epoch)
+
+                        #  Area Under the Curve (AUC) 
+                        res_auc = metrics.auc(false_positives_axe, true_positives_axe)
+                        self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=epoch)  
+
+                        # Compute confusion matrix to evaluate the accuracy of a classification.
+                        if len(self.DataGen.list_classes)<200:
+                            cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
+                            fig_cm = self.Plot_confusion_matrix(cm)
+                            self.wandb.log({'Confusion Matrix' : fig_cm}, step=epoch)
+
+
+                        #############################################################################################
+                        # Save accuracy and epoch to select best model
+                        #############################################################################################
+                        temp_df= pd.DataFrame({'epoch':[epoch],'accuracy':[accuracy]})
+
+                        df = pd.concat([df,temp_df],ignore_index=True)
+
+                        to_print = 'Test || '
+                        to_print += "Epoch: %2d || "%(epoch)
+                        to_print += "Accuracy: %.2f || "%(100*accuracy)
+
+                        print(self.pre, to_print)
+
+                        df.to_csv(self.evaluation_file)
+                    
+                        epochs_checked+=[epoch]
+                    
+                    if len(epochs_checked)==self.total_tests:
+                        break
+                    
+                print( self.pre ,"End testing service")
                 
-                for i, res in enumerate(results):
-                    results[i] = res[:self.DataGen.nb_elements]
-                    print(results[i].shape)
-                
-                
-                #############################################################################################
-                # GET VALUES
-                #############################################################################################
-                # c_pred_1, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
-                pred_array = np.argmax(results[0],axis=1)
-                annot_array = np.squeeze(results[3])
-                scores_array = np.max(results[0],axis=1)
-                correctness_array = (pred_array==annot_array).astype(np.int64)
-                
-                
-                print(pred_array.shape)
-                print(annot_array.shape)
-                print(scores_array.shape)
-
-                pred_loss    = results[1][:,-1]
-
-                print(self.pre,"Length of the test: ", len(pred_array))
-
-                #############################################################################################
-                # COMPUTE METRICS
-                #############################################################################################
-
-                ######## Classification
-
-                # Compute the F1 score, also known as balanced F-score or F-measure
-                f1 = metrics.f1_score(annot_array, pred_array, average='macro')
-                self.wandb.log({'F1 score': f1}, step=self.loaded_epoch)
-
-                # Accuracy classification score
-                accuracy = metrics.accuracy_score(annot_array, pred_array)
-                self.wandb.log({'Test: Classification Accuracy': accuracy}, step=self.loaded_epoch)
-
-                # Compute Receiver operating characteristic (ROC)
-                false_positives_axe, true_positives_axe, roc_seuil = metrics.roc_curve(correctness_array, scores_array)
-                fig_roc = self.Plot_ROC(false_positives_axe, true_positives_axe, roc_seuil)
-                self.wandb.log({'Receiver operating characteristic (ROC)': fig_roc}, step=self.loaded_epoch)
-
-                #  Area Under the Curve (AUC) 
-                res_auc = metrics.auc(false_positives_axe, true_positives_axe)
-                self.wandb.log({'Area Under the Curve (AUC) ': res_auc}, step=self.loaded_epoch)  
-
-                # Compute confusion matrix to evaluate the accuracy of a classification.
-                if len(self.config["NETWORK"]["CLASSES"])<200:
-                    cm = metrics.confusion_matrix(annot_array, pred_array).astype(np.float32)
-                    fig_cm = self.Plot_confusion_matrix(cm)
-                    self.wandb.log({'Confusion Matrix' : fig_cm}, step=self.loaded_epoch)
-
-                ######## Regression (loss estimation)
-
-                mae_v1 = metrics.mean_absolute_error(true_loss, pred_loss)
-                self.wandb.log({'Mean absolute error': mae_v1}, step=self.loaded_epoch)
-
-                evs_v1 = metrics.explained_variance_score(true_loss, pred_loss)
-                self.wandb.log({'Explained variance': evs_v1}, step=self.loaded_epoch)
-
-                mse_v1 = metrics.mean_squared_error(true_loss, pred_loss)
-                self.wandb.log({'Mean squared error': mse_v1}, step=self.loaded_epoch)
-
-
-                #############################################################################################
-                # Save accuracy and epoch to select best model
-                #############################################################################################
-                temp_df= pd.DataFrame({'epoch':[self.loaded_epoch],'accuracy':[accuracy]})
-
-                df = pd.concat([df,temp_df],ignore_index=True)
-
-                to_print = 'Test || '
-                to_print += "Epoch: %2d || "%(self.loaded_epoch)
-                to_print += "Accuracy: %.2f || "%(100*accuracy)
-
-                print(self.pre, to_print)
-            # for
-
-            df.to_csv(self.evaluation_file)
-
-
-        
-
-                  
     def Plot_confusion_matrix(self,cm):
         
         import plotly.graph_objects as go
@@ -300,8 +293,8 @@ class Active_Learning_test:
         # Compute and save confusion matrix
         fig = go.Figure({'data': [
                             {
-                                'x': self.config["NETWORK"]["CLASSES"],
-                                'y': self.config["NETWORK"]["CLASSES"],
+                                'x': self.DataGen.list_classes,
+                                'y': self.DataGen.list_classes,
                                 'z': cm.tolist(),
                                 'type': 'heatmap', 'name': 'Confusion_matrix',
                                 'colorscale': [[0, 'rgb(255, 255, 255)'],

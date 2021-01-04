@@ -20,10 +20,14 @@ class ClassificationDataset:
                  pad=False,
                  sampling="log_proportional",
                  subset="train",
+                 random_crop = True,
                  random_crop_margin=0.1,
+                 random_flip = True,
                  random_greyscale=False,
                  random_hue = False,
                  rot90=False,
+                 random_brightness=False,
+                 random_saturation=False,
                  no_image_check=False):
         """Create the datagenerator for classification using tf.data.Dataset
 
@@ -32,7 +36,7 @@ class ClassificationDataset:
             dataset: The dataset from AutoML of the path of a directory
                 (AutoML.AutoML_dataset.AutoMLDataset or path)
             data_augmentation: whether to use data augmentation or not
-                (True or False, default: True).
+                (True or False, default: False).
             outsize: the width and height of the input image to the classifier
                 (int, default:None)
             original_size: the size of the image get from datanet to transform
@@ -145,6 +149,9 @@ class ClassificationDataset:
                     else:
                         images = tf.map_fn(reader, files, dtype = tf.uint8, parallel_iterations=nb_parallel)
                     images = tf.reshape(images, [self.batchsize, self.side_size, self.side_size, 3])
+                    if False:
+                        images = tf.image.convert_image_dtype(images, tf.float32)
+                    
                     images = tf.cast(images, dtype=tf.float32)
                     if outsize_ != None:
                         images = tf.image.resize_images(images, [outsize_, outsize_])
@@ -152,34 +159,70 @@ class ClassificationDataset:
                         outsize_=256
 
                     images = tf.image.per_image_standardization(tf.cast(images, dtype=tf.dtypes.float32))
+                    
                     if data_augmentation:
-                        marge = random_crop_margin
-                        base = 1.0-random_crop_margin
-                        offset = [[0,0,base,base]]
-                        boxes = tf.random.uniform([batchsize,4], minval = 0.0, maxval=marge) + np.array(offset)
-                        images = tf.image.crop_and_resize(images, boxes = boxes,
-                                                          box_ind=np.array(range(batchsize),dtype=np.int32),
-                                                          crop_size=[outsize_,outsize_])
+                        ################################
+                        # Random crop to every image
+                        ################################
+                        if random_crop:
+                            marge = random_crop_margin
+                            base = 1.0-random_crop_margin
+                            offset = [[0,0,base,base]]
+                            boxes = tf.random.uniform([batchsize,4], minval = 0.0, maxval=marge) + np.array(offset)
+                            images = tf.image.crop_and_resize(images, boxes = boxes,
+                                                              box_ind=np.array(range(batchsize),dtype=np.int32),
+                                                              crop_size=[outsize_,outsize_])
+                        ################################
+                        # random_brightness
+                        ################################
+                        if random_brightness:
+                            images = tf.image.random_brightness(images, max_delta=32.0 / 255.0)
+                            
+                        ################################
+                        # random_saturation
+                        ################################
+                        if random_saturation:
+                            images = tf.image.random_saturation(images, lower=0.5, upper=1.5)
+                            
+                        ################################
+                        # random hue to 5 % of the images
+                        ################################
                         if random_hue:
                             images_hue = tf.map_fn(lambda x : tf.image.random_hue(x, 0.1), images)
                             images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95),
                                               x=images_hue, y=images)
+                            
+                        ################################
+                        # random 90` rotation to 5 % of the images
+                        ################################
                         if rot90:
                             for k in [1, 2, 3]:
                                 images_rot = tf.map_fn(lambda x : tf.image.rot90(x,k=k), images)
                                 images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95),
                                                   x=images_rot, y=images)
-                        images = tf.image.random_flip_left_right(images)
+                                
+                        ################################
+                        # random greyscale to 5 % of the images
+                        ################################
                         if random_greyscale:
                             images_grey = tf.reduce_mean(images, axis=-1)
                             images_grey = tf.stack([images_grey, images_grey, images_grey], axis=-1)
                             images = tf.where(tf.greater(tf.random.uniform([batchsize], minval=0.0, maxval=1.0), 0.95), x = images_grey, y = images)
+                        
+                        ################################
+                        # random flip (normally 1/2 of the images)
+                        ################################
+                        if random_flip:
+                            images = tf.image.random_flip_left_right(images)
+                            
+                    #images = tf.clip_by_value(images, 0.0, 1.0)
                     return images
                 tf_data = tf_data.map(lambda x : (read_op(x), tf.expand_dims(tf.gather(self.labels, x), -1), tf.gather(self.files, x)), num_parallel_calls=6)
                 tf_data = tf_data.apply(tf.data.experimental.ignore_errors())
                 tf_data = tf_data.prefetch(100)
 
                 self.data_tensors = tf_data.make_one_shot_iterator().get_next()
+                
                 tf.summary.image("input_images", self.data_tensors[0],max_outputs=16)
                 self.images_tensor = self.data_tensors[0]
                 
