@@ -17,8 +17,8 @@ NETWORK:
   embedding_size: 128
 PROJECT:
   dataset_name: person_classification
-  group: Random
-  group_dir: /mnt/Ressources/Andres/runs/Random
+  group: Random_v2
+  group_dir: /mnt/Ressources/Andres/runs/Random_v2
   project: Active_Learning_Datanet
   project_dir: /mnt/Ressources/Andres/runs
 TEST:
@@ -34,6 +34,6 @@ TRAIN:
   lr: 0.0025
   test_each: 5
   transfer_weight_path: /mnt/Ressources/Andres/runs/imagenet/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
-  weight_lossnet_loss: 1.0
+  weight_lossnet_loss: 0.0
   weight_decay: 0.00002
   apply_weight_decay: false

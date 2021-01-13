@@ -22,8 +22,12 @@ class Active_Learning_train:
         
         self.run_path = os.path.dirname(os.path.realpath(__file__))
         os.chdir(self.run_path)
-        core = local_module("core")
-        backbones = local_module("backbones")
+        
+        utils         = local_module("utils")
+        logger        = local_module("logger")
+        lossnet       = local_module("lossnet")
+        data_pipeline = local_module("data_pipeline")
+        backbones     = local_module("backbones")
         
         #############################################################################################
         # PARAMETERS RUN
@@ -104,19 +108,18 @@ class Active_Learning_train:
                     #############################################################################################
                     # LOAD DATA
                     #############################################################################################
-                    self.DataGen = core.ClassificationDataset(  config["TRAIN"]["batch_size"],
-                                                                self.dataset,
-                                                                data_augmentation=config["DATASET"]["Data_augementation"],
-                                                                subset="train",
-                                                                original_size      = config["DATASET"]["original_size"],
-                                                                pad                = config["DATASET"]["pad"],
-                                                                sampling           = config["DATASET"]["sampling"],
-                                                                random_crop_margin = config["DATASET"]["random_crop_margin"],
-                                                                random_greyscale   = config["DATASET"]["random_greyscale"],
-                                                                random_hue         = config["DATASET"]["random_hue"],
-                                                                rot90              = config["DATASET"]["rot90"],
-                                                                random_brightness  = config["DATASET"]["random_brightness"],
-                                                                random_saturation  = config["DATASET"]["random_saturation"])  
+
+                    self.DataGen = data_pipeline.ClassificationDataset(   config["TRAIN"]["batch_size"],
+                                                                    self.dataset,
+                                                                    subset = "train",
+                                                                    original_size      = config["DATASET"]["original_size"],
+                                                                    data_augmentation  = config["DATASET"]["Data_augementation"],
+                                                                    random_flip        = config["DATASET"]["random_flip"],
+                                                                    pad                = config["DATASET"]["pad"],
+                                                                    random_crop_pad    = config["DATASET"]["random_crop_pad"],
+                                                                    random_hue         = config["DATASET"]["random_hue"],
+                                                                    random_brightness  = config["DATASET"]["random_brightness"],
+                                                                    random_saturation  = config["DATASET"]["random_saturation"])  
                     
 
                     self.num_class = len(self.DataGen.list_classes)
@@ -172,7 +175,7 @@ class Active_Learning_train:
                     #############################################################################################
                     #c_pred_features_1 = self.classifier(img_input)
                     #c_pred_1 = c_pred_features[0]
-                    loss_pred_embeddings = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
+                    loss_pred_embeddings = lossnet.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
                                         
                     model_inputs  = [img_input]
                     model_outputs = [c_pred] + loss_pred_embeddings
@@ -224,7 +227,7 @@ class Active_Learning_train:
                     # DEFINE WEIGHT DECAY
                     #############################################################################################
                     if self.config['TRAIN']['apply_weight_decay']:
-                        core.add_weight_decay(self.model,self.config['TRAIN']['weight_decay'])
+                        utils.add_weight_decay(self.model,self.config['TRAIN']['weight_decay'])
 
                     #############################################################################################
                     # DEFINE LOSSES
@@ -232,17 +235,17 @@ class Active_Learning_train:
                     
                     # losses
                     self.loss_dict = {}
-                    self.loss_dict['c_pred'] = losses.sparse_categorical_crossentropy
-                    self.loss_dict['l_pred_w']   = core.Loss_Lossnet
-                    self.loss_dict['l_pred_s']   = core.Loss_Lossnet
+                    self.loss_dict['c_pred']    = losses.sparse_categorical_crossentropy
+                    self.loss_dict['l_pred_w']  = lossnet.Loss_Lossnet
+                    self.loss_dict['l_pred_s']  = lossnet.Loss_Lossnet
                     # weights
                     self.weight_w = backend.variable(self.config['TRAIN']['weight_lossnet_loss'])
                     self.weight_s = backend.variable(0)
 
                     self.loss_w_dict = {}
-                    self.loss_w_dict['c_pred'] = 1
-                    self.loss_w_dict['l_pred_w']   = self.weight_w
-                    self.loss_w_dict['l_pred_s']   = self.weight_s
+                    self.loss_w_dict['c_pred']   = 1.0
+                    self.loss_w_dict['l_pred_w'] = self.weight_w
+                    self.loss_w_dict['l_pred_s'] = self.weight_s
                     #self.loss_w_dict['Embedding']  = 0
 
                     #############################################################################################
@@ -250,9 +253,9 @@ class Active_Learning_train:
                     #############################################################################################
                     # metrics
                     self.metrics_dict = {}
-                    self.metrics_dict['c_pred'] = metrics.sparse_categorical_accuracy
-                    self.metrics_dict['l_pred_w']   = core.MAE_Lossnet
-                    self.metrics_dict['l_pred_s']   = core.MAE_Lossnet
+                    self.metrics_dict['c_pred']      = tf.keras.metrics.SparseCategoricalAccuracy()
+                    #self.metrics_dict['l_pred_w']   = lossnet.MAE_Lossnet
+                    #self.metrics_dict['l_pred_s']   = lossnet.MAE_Lossnet
 
                     #############################################################################################
                     # DEFINE OPTIMIZER
@@ -273,7 +276,8 @@ class Active_Learning_train:
                     self.callbacks.append(model_checkpoint_callback)
 
                     # Callback to wandb
-                    self.callbacks.append(self.wandb.keras.WandbCallback())
+                    # i remplaced this for a custom callback that saves the logs with better names
+                    #self.callbacks.append(self.wandb.keras.WandbCallback())
 
                     # Callback Learning Rate
                     def scheduler(epoch):
@@ -283,10 +287,13 @@ class Active_Learning_train:
                                 lr*=0.1
                         return lr
 
-                    self.callbacks.append(tf.keras.callbacks.LearningRateScheduler(scheduler))
+                    #self.callbacks.append(tf.keras.callbacks.LearningRateScheduler(scheduler))
                     
                     # callback to change the weigths for the split training:
-                    self.callbacks.append(core.Change_loss_weights(self.weight_w, self.weight_s, self.split_epoch, self.config['TRAIN']['weight_lossnet_loss']))
+                    self.callbacks.append(lossnet.Change_loss_weights(self.weight_w, 
+                                                                      self.weight_s, 
+                                                                      self.split_epoch, 
+                                                                      self.config['TRAIN']['weight_lossnet_loss']))
                     
                     ##################
                     # SETUP WATCHER
@@ -300,13 +307,14 @@ class Active_Learning_train:
                                                     status="Idle")
 
                     # Callback update progress
-                    self.Update_progress = core.Update_progress(self.run_watcher,
-                                                                self.name_run,
-                                                                self.steps_per_epoch, 
-                                                                self.total_epochs, 
-                                                                self.total_steps, 
-                                                                self.current_epoch, 
-                                                                self.current_step)
+                    self.Update_progress = logger.Update_progress(  self.run_watcher,
+                                                                    self.wandb,
+                                                                    self.name_run,
+                                                                    self.steps_per_epoch, 
+                                                                    self.total_epochs, 
+                                                                    self.total_steps, 
+                                                                    self.current_epoch, 
+                                                                    self.current_step)
                     
                     self.callbacks.append(self.Update_progress)
 

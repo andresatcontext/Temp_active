@@ -1,13 +1,13 @@
 DATASET:
   Data_augementation: true
   original_size: 256
-  pad: false
+  pad: False
   random_crop: true
   random_crop_pad: 30
   random_flip: true
-  random_greyscale: false
-  random_hue :  false
-  rot90: false
+  random_greyscale: False
+  random_hue :  False
+  rot90: False
   random_brightness: false
   random_saturation: false
 NETWORK:
@@ -17,23 +17,24 @@ NETWORK:
   embedding_size: 128
 PROJECT:
   dataset_name: person_classification
-  group: Random
-  group_dir: /mnt/Ressources/Andres/runs/Random
+  group: Classification_01_12_0
+  group_dir: /mnt/Ressources/Andres/runs/Classification_01_12_0
   project: Active_Learning_Datanet
   project_dir: /mnt/Ressources/Andres/runs
 TEST:
   batch_size: 16
 TRAIN:
-  EPOCH_SLIT: 80
+  EPOCH_SLIT: 60
   EPOCH_WARMUP: 2
-  EPOCH_WHOLE: 120
+  EPOCH_WHOLE: 60
   MILESTONES:
-  - 140
-  - 180
+  - 30
+  - 60
+  - 90
   batch_size: 32
   lr: 0.0025
-  test_each: 5
+  test_each: 1
   transfer_weight_path: /mnt/Ressources/Andres/runs/imagenet/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
-  weight_lossnet_loss: 1.0
+  weight_lossnet_loss: 0
   weight_decay: 0.00002
   apply_weight_decay: false

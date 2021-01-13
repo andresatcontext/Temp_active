@@ -6,6 +6,7 @@ class Active_Learning_inference:
     def __init__(self,   config, 
                          filenames,
                          labels,
+                         classes_semantics,
                          num_run,
                          model_path):
 
@@ -21,12 +22,20 @@ class Active_Learning_inference:
         
         self.run_path = os.path.dirname(os.path.realpath(__file__))
         os.chdir(self.run_path)
-        core = local_module("core")
-        backbones = local_module("backbones")
+        
+        utils         = local_module("utils")
+        logger        = local_module("logger")
+        lossnet       = local_module("lossnet")
+        data_pipeline = local_module("data_pipeline")
+        backbones     = local_module("backbones")
         
         #############################################################################################
         # PARAMETERS RUN
         #############################################################################################
+        self.list_classes    = classes_semantics
+        self.filenames       = filenames
+        self.labels          = labels
+        
         self.config          = config
         self.filenames       = filenames
         self.labels          = labels
@@ -69,13 +78,13 @@ class Active_Learning_inference:
                 #############################################################################################
                 # LOAD DATA
                 #############################################################################################
-                self.DataGen = core.AL_temp_Dataset( config["TEST"]["batch_size"],
-                                                     self.filenames,
-                                                     self.labels,
-                                                     data_augmentation=False,
-                                                     sampling="test",
-                                                     subset="test")  
-                
+                self.DataGen = data_pipeline.ClassificationDataset_AL(  config["TEST"]["batch_size"],
+                                                                            self.filenames,
+                                                                            self.labels,
+                                                                            self.list_classes,
+                                                                            subset = "inference",
+                                                                            original_size      = config["DATASET"]["original_size"],
+                                                                            data_augmentation  = False)  
                 self.num_class = len(self.DataGen.list_classes)
                 
                 #############################################################################################
@@ -127,28 +136,20 @@ class Active_Learning_inference:
                 #############################################################################################
                 #c_pred_features_1 = self.classifier(img_input)
                 #c_pred_1 = c_pred_features_1[0]
-                loss_pred_embeddings = core.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
+                loss_pred_embeddings = lossnet.Lossnet(c_pred_features, self.config["NETWORK"]["embedding_size"])
                 
                 # add some inputs to prediction and testing
-                labels_tensor = tf.keras.Input(tensor=self.DataGen.data_tensors[1], name= 'labels_tensor')
-                files_tesor   = tf.keras.Input(tensor=self.DataGen.data_tensors[2], name= 'files_tesor')
+                labels_tensor = tf.keras.Input(tensor=self.DataGen.next_element[1], name= 'labels_tensor')
+                files_tesor   = tf.keras.Input(tensor=self.DataGen.next_element[2], name= 'files_tesor')
                 
                 model_inputs  = [img_input, labels_tensor, files_tesor]
                 model_outputs = [c_pred, loss_pred_embeddings[0], loss_pred_embeddings[2], labels_tensor, files_tesor]
                 
                 self.model = models.Model(inputs=model_inputs, outputs=model_outputs)
 
-                #############################################################################################
-                # DEFINE METRICS
-                #############################################################################################
-                # metrics
-                self.metrics_dict = {}
-                self.metrics_dict['Classifier'] = metrics.sparse_categorical_accuracy
-                self.metrics_dict['l_pred_w']   = core.MAE_Lossnet
-                self.metrics_dict['l_pred_s']   = core.MAE_Lossnet
 
                 #############################################################################################
-                # LOAD PATH TO TEST
+                # LOAD PATH TO INFER
                 #############################################################################################
 
                 self.loaded_epoch = int(model_path.split('.')[-2])
@@ -177,6 +178,10 @@ class Active_Learning_inference:
         
         with self.graph.as_default():
             with self.sess.as_default():
+                
+                # set the dataset to the beggining
+                self.sess.run(self.DataGen.iterator.initializer)
+                
                 print( self.pre ,"Start inference")
                 results = self.model.predict(None,steps=self.steps_per_epoch)
                 
